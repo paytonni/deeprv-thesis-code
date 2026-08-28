@@ -1,0 +1,15 @@
+# Shared environment for all five final notebooks: Python 3.12 on NVIDIA A100
+dl4bi @ git+https://github.com/MLGlobalHealth/dl4bi.git@23b4ec5c
+dl4bi-sps>=0.1.2,<1
+jax==0.8.3
+jaxlib==0.8.3
+numpyro==0.21.0
+orbax-checkpoint==0.11.40
+flax>=0.12,<0.13
+optax
+arviz
+numpy
+pandas
+scipy
+matplotlib
+wandb

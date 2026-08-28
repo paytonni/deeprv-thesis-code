@@ -1,0 +1,39 @@
+# Experiment outputs
+results/
+result/
+outputs/
+output/
+checkpoints/
+checkpoint/
+wandb/
+logs/
+
+# Generated scientific artifacts
+*.ckpt
+*.npz
+*.npy
+*.pkl
+*.pickle
+*.zip
+*.sha256
+*.png
+*.jpg
+*.jpeg
+*.svg
+*.pdf
+
+# Python and notebook caches
+__pycache__/
+*.py[cod]
+.ipynb_checkpoints/
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+
+# JAX/XLA and local environment files
+.jax_cache/
+.xla_cache/
+.venv/
+venv/
+.env
+.DS_Store

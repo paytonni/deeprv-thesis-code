@@ -1,0 +1,33 @@
+{
+  "seeds": [
+    0,
+    1,
+    2
+  ],
+  "target_grid_size": 128,
+  "domain": [
+    0.0,
+    100.0
+  ],
+  "true_lengthscale": 30.0,
+  "true_beta": 1.0,
+  "gp_variance": 1.0,
+  "kernel": "matern_1_2",
+  "covariance_jitter": 0.0005,
+  "observation_ratio": 0.5,
+  "mask_type": "uniform_random",
+  "models": [
+    "Exact128",
+    "Bilinear64",
+    "Cubic64",
+    "DTC64",
+    "FITC64"
+  ],
+  "formal_train_steps": 300000,
+  "microbatch_size": 16,
+  "num_chains": 1,
+  "num_warmup": 4000,
+  "num_samples": 6000,
+  "target_accept_prob": 0.8,
+  "max_tree_depth": 10
+}
