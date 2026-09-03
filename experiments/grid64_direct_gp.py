@@ -1,9 +1,8 @@
 """Poisson-GP benchmark for SKI, DTC/SoR, and FITC priors.
 
-Run from the repository root.  This script intentionally leaves the existing
-DeepRV exact/lowres/local implementations unchanged.  It uses the same seeded
-data and mask construction as ``paperlike_32x32_poisson_gp_pilot.py`` and adds
-direct approximate-GP priors for comparison with the saved DeepRV runs.
+Run from the repository root. This script uses the same seeded 64x64 data and
+mask construction as the DeepRV comparison and adds matched direct
+approximate-GP priors.
 """
 
 from __future__ import annotations
@@ -38,6 +37,7 @@ from scipy.special import gammaln, logsumexp
 
 import grid64_common as base
 from dl4bi_sps.kernels import matern_1_2
+from metric_normalization import normalize_analysis_metrics
 
 
 METHODS = (
@@ -102,18 +102,21 @@ def append_local_console_log(local_path: Path, seed_dir: Path) -> None:
 
 @dataclass(frozen=True)
 class Config:
-    grid_size: int
+    grid_size: int = 64
     inducing_grid_size: int = 8
     seed: int = 0
     domain_stop: float = 100.0
     gt_ls: float = 30.0
     beta_true: float = 1.0
     obs_ratio: float = 0.5
-    obs_mask_type: str = "spatial"
+    obs_mask_type: str = "uniform"
     prior_loc: float = 3.0
     prior_scale: float = 0.4
     coverage_level: float = 0.9
     num_chains: int = 2
+    target_accept_prob: float = 0.8
+    max_tree_depth: int = 10
+    init_to_median_num_samples: int = 10
     initial_warmup: int = 1_000
     initial_samples: int = 4_000
     extended_warmup: int = 1_000
@@ -126,14 +129,15 @@ class Config:
     methods: tuple[str, ...] = METHODS
     require_full_reference: bool = True
     reference_run_name: str | None = None
-    output_root: str = "outputs/poisson_gp_inducing_benchmark"
-    run_name: str = "poisson_gp_inducing"
+    output_root: str = "outputs/grid64_direct_gp"
+    run_name: str = "grid64_direct_gp"
     force_rerun: bool = False
+    manual_rerun_failed: bool = False
 
 
 def parse_args(default_grid_size: int | None = None) -> Config:
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument("--grid-size", type=int, default=default_grid_size or 16)
+    parser.add_argument("--grid-size", type=int, default=default_grid_size or 64)
     parser.add_argument("--inducing-grid-size", type=int, default=8)
     parser.add_argument("--seed", type=int, choices=(0, 1, 2), default=0)
     parser.add_argument("--domain-stop", type=float, default=100.0)
@@ -143,13 +147,16 @@ def parse_args(default_grid_size: int | None = None) -> Config:
     parser.add_argument(
         "--obs-mask-type",
         choices=("spatial", "uniform"),
-        default="spatial",
+        default="uniform",
         help="Observation mask design used by the fixed likelihood.",
     )
     parser.add_argument("--prior-loc", type=float, default=3.0)
     parser.add_argument("--prior-scale", type=float, default=0.4)
     parser.add_argument("--coverage-level", type=float, default=0.9)
     parser.add_argument("--num-chains", type=int, default=2)
+    parser.add_argument("--target-accept-prob", type=float, default=0.8)
+    parser.add_argument("--max-tree-depth", type=int, default=10)
+    parser.add_argument("--init-to-median-num-samples", type=int, default=10)
     parser.add_argument("--initial-warmup", type=int, default=1_000)
     parser.add_argument("--initial-samples", type=int, default=4000)
     parser.add_argument("--extended-warmup", type=int, default=1000)
@@ -176,14 +183,19 @@ def parse_args(default_grid_size: int | None = None) -> Config:
         help=(
             "Allow approximate direct-GP methods to run without full_gp in the "
             "same run. Metrics versus Full GP will be absent. This is intended "
-            "for 64x64/128x128 cost pilots."
+            "only for an explicitly requested resource-limited run."
         ),
     )
     parser.add_argument(
-        "--output-root", default="outputs/poisson_gp_inducing_benchmark"
+        "--output-root", default="outputs/grid64_direct_gp"
     )
     parser.add_argument("--run-name", default=None)
     parser.add_argument("--force-rerun", action="store_true")
+    parser.add_argument(
+        "--manual-rerun-failed",
+        action="store_true",
+        help="Write a separate recovery run after failed formal diagnostics.",
+    )
     args = parser.parse_args()
     args.methods = tuple(dict.fromkeys(args.methods))
     args.run_name = args.run_name or (
@@ -201,7 +213,7 @@ def parse_args(default_grid_size: int | None = None) -> Config:
     ):
         raise ValueError(
             "Include full_gp, pass --reference-run-name, or pass "
-            "--allow-missing-full-reference for large-grid cost pilots."
+            "--allow-missing-full-reference for a resource-limited run."
         )
     return cfg
 
@@ -216,6 +228,9 @@ def as_base_config(cfg: Config) -> base.Config:
         obs_ratio=cfg.obs_ratio,
         obs_mask_type=cfg.obs_mask_type,
         num_chains=cfg.num_chains,
+        target_accept_prob=cfg.target_accept_prob,
+        max_tree_depth=cfg.max_tree_depth,
+        init_to_median_num_samples=cfg.init_to_median_num_samples,
         initial_warmup=cfg.initial_warmup,
         initial_samples=cfg.initial_samples,
         extended_warmup=cfg.extended_warmup,
@@ -386,9 +401,10 @@ def load_result(path: Path):
     return samples, posterior, metrics, diagnostics
 
 
-def load_full_reference(seed_dir: Path):
-    """Load the best available full-GP reference from a seed directory."""
-    for budget in ("extended", "initial"):
+def load_full_reference(seed_dir: Path, *, allow_manual_recovery: bool = False):
+    """Load the formal reference unless manual recovery was explicitly requested."""
+    budgets = ("extended", "initial") if allow_manual_recovery else ("initial",)
+    for budget in budgets:
         loaded = load_result(output_dir(seed_dir, budget, "full_gp"))
         if loaded is None:
             continue
@@ -416,7 +432,14 @@ def run_hmc_diagnostic(
     """Run NUTS while retaining inducing/residual draws for prediction."""
     warmup, draws = budget_values(cfg, budget)
     mcmc = MCMC(
-        NUTS(model, init_strategy=init_to_median(num_samples=10)),
+        NUTS(
+            model,
+            init_strategy=init_to_median(
+                num_samples=cfg.init_to_median_num_samples
+            ),
+            target_accept_prob=cfg.target_accept_prob,
+            max_tree_depth=cfg.max_tree_depth,
+        ),
         num_chains=cfg.num_chains,
         num_warmup=warmup,
         num_samples=draws,
@@ -429,7 +452,7 @@ def run_hmc_diagnostic(
         surrogate_decoder=surrogate_decoder,
         obs_mask=data["obs_mask"],
         y=data["y_full"],
-        extra_fields=("diverging",),
+        extra_fields=("diverging", "num_steps"),
     )
     infer_time = perf_counter() - start
     all_chain = mcmc.get_samples(group_by_chain=True)
@@ -467,6 +490,13 @@ def run_hmc_diagnostic(
         "mcmc_samples_per_chain": draws,
         "num_chains": cfg.num_chains,
         "num_divergences": int(np.asarray(extra["diverging"]).sum()),
+        "max_tree_depth_hits": int(
+            np.sum(
+                np.asarray(extra["num_steps"]).reshape(-1)
+                >= 2**cfg.max_tree_depth - 1
+            )
+        ),
+        "max_tree_depth": cfg.max_tree_depth,
         "nuts_inference_time": infer_time,
         "posterior_predictive_time": posterior_predictive_time,
         "inference_total_time": infer_time + posterior_predictive_time,
@@ -618,8 +648,11 @@ def run_method(
             ),
             "diagnostics_passed": diagnostics["diagnostics_passed"],
             "diagnostic_failures": "; ".join(diagnostics["diagnostic_failures"]),
+            "max_tree_depth_hits": diagnostics["max_tree_depth_hits"],
+            "max_tree_depth": diagnostics["max_tree_depth"],
         }
     )
+    metrics = normalize_analysis_metrics(metrics)
     base.save_inference(destination, samples_chain, posterior_small, metrics, diagnostics)
     base.plot_chain_diagnostics(
         destination,
@@ -747,14 +780,20 @@ def main(default_grid_size: int | None = None) -> None:
                         continue
                     reference = None
                     if method != "full_gp":
-                        full = results.get("full_gp") or load_full_reference(seed_dir)
+                        full = results.get("full_gp") or load_full_reference(
+                            seed_dir,
+                            allow_manual_recovery=cfg.manual_rerun_failed,
+                        )
                         if full is None and cfg.reference_run_name is not None:
                             reference_seed_dir = (
                                 Path(cfg.output_root)
                                 / cfg.reference_run_name
                                 / f"seed_{cfg.seed}"
                             )
-                            full = load_full_reference(reference_seed_dir)
+                            full = load_full_reference(
+                                reference_seed_dir,
+                                allow_manual_recovery=cfg.manual_rerun_failed,
+                            )
                         if full is None:
                             if cfg.require_full_reference:
                                 raise RuntimeError(
@@ -780,9 +819,12 @@ def main(default_grid_size: int | None = None) -> None:
                         reference,
                     )
                     results[method] = result
-                    if not result[3]["diagnostics_passed"]:
+                    if (
+                        cfg.manual_rerun_failed
+                        and not result[3]["diagnostics_passed"]
+                    ):
                         print(
-                            f"{method}: initial diagnostics failed; running extended budget"
+                            f"{method}: running user-requested recovery after failed formal diagnostics"
                         )
                         results[method] = run_method(
                             cfg,

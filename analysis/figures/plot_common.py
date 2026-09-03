@@ -40,6 +40,9 @@ COLORS = {
     "Full GP": "#767676",
 }
 MARKERS = {8: "o", 16: "s", 32: "^"}
+MEAN_MARKER_SIZE = 3.5
+MEAN_LINE_WIDTH = 1.2
+ERRORBAR_CAP_SIZE = 2.0
 
 
 def apply_style(font_size: float = 8.0) -> None:
@@ -167,6 +170,7 @@ def draw_metric_panel(
     sides: tuple[int, int, int],
     log_scale: bool = False,
     coverage: bool = False,
+    show_seed_points: bool = True,
 ) -> None:
     subset = long[(long["grid"] == grid) & (long["family"] == "DeepRV")]
     for teacher in TEACHERS:
@@ -181,24 +185,25 @@ def draw_metric_panel(
                 (subset["teacher"] == teacher)
                 & (subset["inducing_side"] == side)
             ][metric]
-            ax.scatter(
-                np.full(len(values), side),
-                values,
-                s=9,
-                facecolors="white",
-                edgecolors=COLORS[teacher],
-                linewidths=0.7,
-                zorder=3,
-            )
+            if show_seed_points:
+                ax.scatter(
+                    np.full(len(values), side),
+                    values,
+                    s=9,
+                    facecolors="white",
+                    edgecolors=COLORS[teacher],
+                    linewidths=0.7,
+                    zorder=3,
+                )
         ax.errorbar(
             sides,
             means,
             yerr=sds,
             color=COLORS[teacher],
             marker="o",
-            markersize=3.5,
-            linewidth=1.2,
-            capsize=2,
+            markersize=MEAN_MARKER_SIZE,
+            linewidth=MEAN_LINE_WIDTH,
+            capsize=ERRORBAR_CAP_SIZE,
             label=teacher,
             zorder=2,
         )

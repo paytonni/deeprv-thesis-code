@@ -55,9 +55,9 @@ def main() -> None:
     top = outer[0].subgridspec(1, 3, wspace=0.62)
     bottom = outer[1].subgridspec(2, 4, wspace=0.08, hspace=0.30)
     metric_axes = [fig.add_subplot(top[0, i]) for i in range(3)]
-    draw_metric_panel(metric_axes[0], long, aggregates, "32x32", "predictive_mse_vs_full_gp", "Predictive MSE vs Full GP", (4, 8, 16), log_scale=True)
-    draw_metric_panel(metric_axes[1], long, aggregates, "32x32", "lengthscale_w1_vs_full_gp", "Lengthscale W1", (4, 8, 16), log_scale=True)
-    draw_metric_panel(metric_axes[2], long, aggregates, "32x32", "coverage_90_unobserved", "Unobserved coverage", (4, 8, 16), coverage=True)
+    draw_metric_panel(metric_axes[0], long, aggregates, "32x32", "predictive_mse_vs_full_gp", "Predictive MSE vs Full GP", (4, 8, 16), log_scale=True, show_seed_points=False)
+    draw_metric_panel(metric_axes[1], long, aggregates, "32x32", "lengthscale_w1_vs_full_gp", "Lengthscale W1", (4, 8, 16), log_scale=True, show_seed_points=False)
+    draw_metric_panel(metric_axes[2], long, aggregates, "32x32", "coverage_90_unobserved", "Unobserved coverage", (4, 8, 16), coverage=True, show_seed_points=False)
     metric_axes[2].set_ylim(0.72, 0.99)
     for axis, label in zip(metric_axes, ("a", "b", "c")):
         add_panel_label(axis, label)

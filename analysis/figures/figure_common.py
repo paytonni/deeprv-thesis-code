@@ -43,6 +43,9 @@ COLORS = {
     "Exact": "#264B73",
     "Full GP": "#6C737A",
 }
+MEAN_MARKER_SIZE = 3.5
+MEAN_LINE_WIDTH = 1.2
+ERRORBAR_CAP_SIZE = 2.0
 
 
 def apply_style(font_size: float = 7.0) -> None:
@@ -176,6 +179,7 @@ def draw_metric_panel(
     *,
     log_scale: bool = False,
     coverage: bool = False,
+    show_seed_points: bool = True,
 ) -> None:
     sides = (8, 16, 32)
     subset = long[(long["grid"] == "64x64") & (long["family"] == "DeepRV")]
@@ -193,24 +197,25 @@ def draw_metric_panel(
             ][metric]
             if len(values) != 3:
                 raise RuntimeError(f"Expected three seeds for {teacher}{side}: {metric}")
-            ax.scatter(
-                np.full(3, side),
-                values,
-                s=11,
-                facecolors="white",
-                edgecolors=COLORS[teacher],
-                linewidths=0.7,
-                zorder=3,
-            )
+            if show_seed_points:
+                ax.scatter(
+                    np.full(3, side),
+                    values,
+                    s=11,
+                    facecolors="white",
+                    edgecolors=COLORS[teacher],
+                    linewidths=0.7,
+                    zorder=3,
+                )
         ax.errorbar(
             sides,
             means,
             yerr=sds,
             color=COLORS[teacher],
             marker="o",
-            markersize=3.4,
-            linewidth=1.1,
-            capsize=2,
+            markersize=MEAN_MARKER_SIZE,
+            linewidth=MEAN_LINE_WIDTH,
+            capsize=ERRORBAR_CAP_SIZE,
             label=teacher,
             zorder=2,
         )

@@ -24,7 +24,17 @@
     "FITC64"
   ],
   "formal_train_steps": 300000,
+  "formal_checkpoint_steps": {
+    "Exact128": 250000,
+    "Bilinear64": 300000,
+    "Cubic64": 300000,
+    "DTC64": 300000,
+    "FITC64": null
+  },
   "microbatch_size": 16,
+  "validation_interval": 10000,
+  "validation_batches": 500,
+  "checkpoint_save_interval": 10000,
   "num_chains": 1,
   "num_warmup": 4000,
   "num_samples": 6000,

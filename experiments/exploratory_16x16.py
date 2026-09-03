@@ -74,7 +74,8 @@ class Config:
     obs_ratio: float = 0.5
     train_steps: int = 200_000
     batch_size: int = 32
-    valid_steps: int = 500
+    validation_interval: int = 10_000
+    validation_batches: int = 500
     mcmc_warmup: int = 4_000
     mcmc_samples: int = 6_000
     num_chains: int = 2
@@ -83,7 +84,7 @@ class Config:
     prior_loc: float = 3.0
     prior_scale: float = 0.4
     coverage_level: float = 0.9
-    checkpoint_interval: int = 10_000
+    checkpoint_save_interval: int = 10_000
     output_root: str = "outputs/deeprv_paperlike_16x16_pretraining_comparison"
     run_name: str = "paperlike16x16_matern12_ls30"
     models: tuple[str, ...] = ALL_MODELS
@@ -101,7 +102,12 @@ def parse_args() -> Config:
     parser.add_argument("--obs-ratio", type=float, default=Config.obs_ratio)
     parser.add_argument("--train-steps", type=int, default=Config.train_steps)
     parser.add_argument("--batch-size", type=int, default=Config.batch_size)
-    parser.add_argument("--valid-steps", type=int, default=Config.valid_steps)
+    parser.add_argument(
+        "--validation-interval", type=int, default=Config.validation_interval
+    )
+    parser.add_argument(
+        "--validation-batches", type=int, default=Config.validation_batches
+    )
     parser.add_argument("--mcmc-warmup", type=int, default=Config.mcmc_warmup)
     parser.add_argument("--mcmc-samples", type=int, default=Config.mcmc_samples)
     parser.add_argument("--num-chains", type=int, default=Config.num_chains)
@@ -111,7 +117,9 @@ def parse_args() -> Config:
     parser.add_argument("--prior-scale", type=float, default=Config.prior_scale)
     parser.add_argument("--coverage-level", type=float, default=Config.coverage_level)
     parser.add_argument(
-        "--checkpoint-interval", type=int, default=Config.checkpoint_interval
+        "--checkpoint-save-interval",
+        type=int,
+        default=Config.checkpoint_save_interval,
     )
     parser.add_argument("--output-root", type=str, default=Config.output_root)
     parser.add_argument("--run-name", type=str, default=Config.run_name)
@@ -130,12 +138,12 @@ def parse_args() -> Config:
         raise ValueError("The formal experiment requires --grid-size 16.")
     if not 0.0 < cfg.obs_ratio < 1.0:
         raise ValueError("--obs-ratio must be in (0, 1).")
-    if cfg.train_steps < 1 or cfg.valid_steps < 1:
+    if min(cfg.train_steps, cfg.validation_interval, cfg.validation_batches) < 1:
         raise ValueError("Training and validation steps must be positive.")
     if cfg.mcmc_warmup < 1 or cfg.mcmc_samples < 1 or cfg.num_chains < 1:
         raise ValueError("MCMC warmup, samples, and chains must be positive.")
-    if cfg.checkpoint_interval < 1:
-        raise ValueError("--checkpoint-interval must be positive.")
+    if cfg.checkpoint_save_interval < 1:
+        raise ValueError("--checkpoint-save-interval must be positive.")
     if not 0.0 < cfg.coverage_level < 1.0:
         raise ValueError("--coverage-level must be in (0, 1).")
     return cfg
@@ -620,7 +628,7 @@ def evaluate_model(
     base_key: Array,
 ) -> float:
     def loader(_):
-        for idx in range(cfg.valid_steps):
+        for idx in range(cfg.validation_batches):
             yield generate_batch(random.fold_in(base_key, idx))
 
     return float(
@@ -629,7 +637,7 @@ def evaluate_model(
             state,
             valid_step,
             loader,
-            cfg.valid_steps,
+            cfg.validation_batches,
         )["norm MSE"]
     )
 
@@ -702,8 +710,13 @@ def train_deeprv(
             optimization_time += perf_counter() - optimize_start
 
             should_validate = (
-                step % cfg.checkpoint_interval == 0 or step == cfg.train_steps
+                step % cfg.validation_interval == 0 or step == cfg.train_steps
             )
+            should_checkpoint = (
+                step % cfg.checkpoint_save_interval == 0
+                or step == cfg.train_steps
+            )
+            metric = None
             if should_validate:
                 metric = evaluate_model(
                     cfg,
@@ -714,6 +727,8 @@ def train_deeprv(
                 if metric < best_metric:
                     best_metric = metric
                     best_params, best_kwargs = state.params, state.kwargs
+            checkpoint = None
+            if should_checkpoint:
                 checkpoint = save_training_checkpoint(
                     checkpoint_dir,
                     state,
@@ -724,6 +739,7 @@ def train_deeprv(
                     optimization_time,
                     previous_wall_time + perf_counter() - wall_start,
                 )
+            if should_validate or should_checkpoint:
                 row = {
                     "step": step,
                     "train_loss": float(loss),
@@ -731,14 +747,16 @@ def train_deeprv(
                     "best_valid_norm_mse": best_metric,
                     "cumulative_gp_sample_generation_time": gp_time,
                     "cumulative_neural_optimization_time": optimization_time,
-                    "checkpoint": str(checkpoint),
+                    "checkpoint": None if checkpoint is None else str(checkpoint),
                     "saved_at_utc": utc_now(),
                 }
                 append_training_history(history_path, row)
-                print(
-                    f"{model_name}: step={step} loss={float(loss):.6g} "
-                    f"valid={metric:.6g} checkpoint={checkpoint.name}"
-                )
+                message = f"{model_name}: step={step} loss={float(loss):.6g}"
+                if metric is not None:
+                    message += f" valid={metric:.6g}"
+                if checkpoint is not None:
+                    message += f" checkpoint={checkpoint.name}"
+                print(message)
 
     best_state = state.replace(params=best_params, kwargs=best_kwargs)
     result = {

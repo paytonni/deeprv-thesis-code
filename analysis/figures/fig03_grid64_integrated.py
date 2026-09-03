@@ -25,9 +25,9 @@ def main() -> None:
     long, aggregates = read_results()
     fig, axes = plt.subplots(1, 3, figsize=(7.20, 2.65))
     fig.subplots_adjust(left=0.075, right=0.985, bottom=0.20, top=0.77, wspace=0.49)
-    draw_metric_panel(axes[0], long, aggregates, "predictive_mse_vs_full_gp", "Predictive MSE vs Full GP", log_scale=True)
-    draw_metric_panel(axes[1], long, aggregates, "lengthscale_w1_vs_full_gp", "Lengthscale $W_1$", log_scale=True)
-    draw_metric_panel(axes[2], long, aggregates, "coverage_90_unobserved", "Unobserved 90% coverage", coverage=True)
+    draw_metric_panel(axes[0], long, aggregates, "predictive_mse_vs_full_gp", "Predictive MSE vs Full GP", log_scale=True, show_seed_points=False)
+    draw_metric_panel(axes[1], long, aggregates, "lengthscale_w1_vs_full_gp", "Lengthscale $W_1$", log_scale=True, show_seed_points=False)
+    draw_metric_panel(axes[2], long, aggregates, "coverage_90_unobserved", "Unobserved 90% coverage", coverage=True, show_seed_points=False)
     for axis, label in zip(axes, "abc"):
         add_panel_label(axis, label, x=-0.16, y=1.03)
     handles, labels = axes[0].get_legend_handles_labels()

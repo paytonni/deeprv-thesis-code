@@ -66,7 +66,12 @@ def parse_args() -> Config:
     parser.add_argument("--obs-ratio", type=float, default=Config.obs_ratio)
     parser.add_argument("--train-steps", type=int, default=Config.train_steps)
     parser.add_argument("--batch-size", type=int, default=Config.batch_size)
-    parser.add_argument("--valid-steps", type=int, default=Config.valid_steps)
+    parser.add_argument(
+        "--validation-interval", type=int, default=Config.validation_interval
+    )
+    parser.add_argument(
+        "--validation-batches", type=int, default=Config.validation_batches
+    )
     parser.add_argument("--mcmc-warmup", type=int, default=Config.mcmc_warmup)
     parser.add_argument("--mcmc-samples", type=int, default=Config.mcmc_samples)
     parser.add_argument("--num-chains", type=int, default=Config.num_chains)
@@ -76,7 +81,9 @@ def parse_args() -> Config:
     parser.add_argument("--prior-scale", type=float, default=Config.prior_scale)
     parser.add_argument("--coverage-level", type=float, default=Config.coverage_level)
     parser.add_argument(
-        "--checkpoint-interval", type=int, default=Config.checkpoint_interval
+        "--checkpoint-save-interval",
+        type=int,
+        default=Config.checkpoint_save_interval,
     )
     parser.add_argument("--output-root", type=str, default=Config.output_root)
     parser.add_argument("--run-name", type=str, default=Config.run_name)
@@ -129,11 +136,12 @@ def parse_args() -> Config:
         raise ValueError("--obs-ratio must be in (0, 1).")
     if min(
         cfg.train_steps,
-        cfg.valid_steps,
+        cfg.validation_interval,
+        cfg.validation_batches,
         cfg.mcmc_warmup,
         cfg.mcmc_samples,
         cfg.num_chains,
-        cfg.checkpoint_interval,
+        cfg.checkpoint_save_interval,
     ) < 1:
         raise ValueError("Training, MCMC, chain, and checkpoint values must be positive.")
     return cfg

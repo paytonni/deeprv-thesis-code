@@ -1,9 +1,4 @@
-"""DeepRV pretraining factorial: location design by GP weighting method.
-
-The posterior model remains DeepRV.  Only the pretraining teacher changes
-between bilinear SKI, cubic SKI, DTC/SoR, and FITC.  Both full-domain lowres
-and central local inducing grids are supported.
-"""
+"""Final 32x32 DeepRV comparison using full-domain inducing grids."""
 
 from __future__ import annotations
 
@@ -35,7 +30,6 @@ from jax import jit, random
 from scipy.optimize import linear_sum_assignment
 
 import grid32_common as base
-import grid32_direct_gp as corrected
 from dl4bi_sps.kernels import matern_1_2
 from model_checks import (
     PriorDiagnosticConfig,
@@ -44,47 +38,48 @@ from model_checks import (
 
 
 WEIGHTINGS = ("bilinear", "cubic", "dtc", "fitc")
-DOMAINS = ("lowres", "local")
 
 
 @dataclass(frozen=True)
 class Config:
-    grid_size: int = 16
-    inducing_grid_sizes: tuple[int, ...] = (8,)
+    grid_size: int = 32
+    inducing_grid_sizes: tuple[int, ...] = (4, 8, 16)
     weightings: tuple[str, ...] = WEIGHTINGS
-    domains: tuple[str, ...] = DOMAINS
     only_models: tuple[str, ...] = ()
     include_full_gp_reference: bool = True
     include_exact: bool = True
     seed: int = 0
     decoder_seed: int = 0
     domain_stop: float = 100.0
-    local_region_width: float = 0.5
     gt_ls: float = 30.0
     beta_true: float = 1.0
     obs_ratio: float = 0.5
-    obs_mask_type: str = "spatial"
+    obs_mask_type: str = "uniform"
     train_steps: int = 200_000
     batch_size: int = 32
-    valid_steps: int = 500
-    checkpoint_interval: int = 10_000
+    validation_interval: int = 500
+    validation_batches: int = 500
+    checkpoint_save_interval: int = 10_000
     lr: float = 5e-3
     prior_loc: float = 3.0
     prior_scale: float = 0.4
     coverage_level: float = 0.9
     num_chains: int = 2
+    target_accept_prob: float = 0.8
+    max_tree_depth: int = 10
+    init_to_median_num_samples: int = 10
     initial_warmup: int = 1_000
     initial_samples: int = 4_000
     extended_warmup: int = 1_000
     extended_samples: int = 4_000
-    inference_budget: str = "auto"
+    inference_budget: str = "formal"
     max_rhat: float = 1.01
     min_bulk_ess: float = 400.0
     min_tail_ess: float = 400.0
     max_relative_mcse: float = 0.05
     jitter: float = 5e-4
-    output_root: str = "outputs/deeprv_weighting_factorial"
-    run_name: str = "deeprv_weighting_factorial"
+    output_root: str = "outputs/grid32"
+    run_name: str = "grid32_thesis_comparison"
     force_rerun: bool = False
     run_truth_metrics: bool = False
     run_prior_diagnostics: bool = False
@@ -95,10 +90,9 @@ class Config:
 
 def parse_args(default_grid_size: int | None = None) -> Config:
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument("--grid-size", type=int, default=default_grid_size or 16)
+    parser.add_argument("--grid-size", type=int, default=default_grid_size or 32)
     parser.add_argument("--inducing-grid-sizes", nargs="+", type=int, default=None)
     parser.add_argument("--weightings", nargs="+", choices=WEIGHTINGS, default=list(WEIGHTINGS))
-    parser.add_argument("--domains", nargs="+", choices=DOMAINS, default=list(DOMAINS))
     parser.add_argument(
         "--only-models",
         nargs="+",
@@ -115,8 +109,8 @@ def parse_args(default_grid_size: int | None = None) -> Config:
         action="store_false",
         dest="include_full_gp_reference",
         help=(
-            "Skip the direct Full GP posterior reference. This is intended for "
-            "large-grid cost pilots where exact Full GP NUTS is not feasible; "
+            "Skip the Full GP posterior reference for an explicitly requested "
+            "resource-limited run; "
             "metrics versus Full GP will be absent."
         ),
     )
@@ -143,36 +137,40 @@ def parse_args(default_grid_size: int | None = None) -> Config:
         ),
     )
     parser.add_argument("--domain-stop", type=float, default=100.0)
-    parser.add_argument("--local-region-width", type=float, default=0.5)
     parser.add_argument("--gt-ls", type=float, default=30.0)
     parser.add_argument("--beta-true", type=float, default=1.0)
     parser.add_argument("--obs-ratio", type=float, default=0.5)
     parser.add_argument(
         "--obs-mask-type",
         choices=("spatial", "uniform"),
-        default="spatial",
+        default="uniform",
         help="Observation mask design used by the fixed downstream likelihood.",
     )
     parser.add_argument("--train-steps", type=int, default=200_000)
     parser.add_argument("--batch-size", type=int, default=32)
-    parser.add_argument("--valid-steps", type=int, default=1_000)
-    parser.add_argument("--checkpoint-interval", type=int, default=10_000)
+    parser.add_argument("--validation-interval", type=int, default=500)
+    parser.add_argument("--validation-batches", type=int, default=500)
+    parser.add_argument("--checkpoint-save-interval", type=int, default=10_000)
     parser.add_argument("--lr", type=float, default=5e-3)
     parser.add_argument("--prior-loc", type=float, default=3.0)
     parser.add_argument("--prior-scale", type=float, default=0.4)
     parser.add_argument("--coverage-level", type=float, default=0.9)
     parser.add_argument("--num-chains", type=int, default=2)
+    parser.add_argument("--target-accept-prob", type=float, default=0.8)
+    parser.add_argument("--max-tree-depth", type=int, default=10)
+    parser.add_argument("--init-to-median-num-samples", type=int, default=10)
     parser.add_argument("--initial-warmup", type=int, default=1_000)
     parser.add_argument("--initial-samples", type=int, default=4_000)
     parser.add_argument("--extended-warmup", type=int, default=1_000)
     parser.add_argument("--extended-samples", type=int, default=4_000)
     parser.add_argument(
         "--inference-budget",
-        choices=("auto", "extended"),
-        default="auto",
+        choices=("formal", "manual-rerun"),
+        default="formal",
         help=(
-            "DeepRV inference schedule. 'auto' runs initial and extends failed "
-            "models; 'extended' runs the extended budget directly."
+            "The default runs the single formal chain set. 'manual-rerun' keeps "
+            "the formal output and writes a separate recovery run only after a "
+            "failed diagnostic result."
         ),
     )
     parser.add_argument("--max-rhat", type=float, default=1.01)
@@ -180,7 +178,7 @@ def parse_args(default_grid_size: int | None = None) -> Config:
     parser.add_argument("--min-tail-ess", type=float, default=400.0)
     parser.add_argument("--max-relative-mcse", type=float, default=0.05)
     parser.add_argument("--jitter", type=float, default=5e-4)
-    parser.add_argument("--output-root", default="outputs/deeprv_weighting_factorial")
+    parser.add_argument("--output-root", default="outputs/grid32")
     parser.add_argument("--run-name", default=None)
     parser.add_argument("--force-rerun", action="store_true")
     parser.add_argument(
@@ -204,10 +202,9 @@ def parse_args(default_grid_size: int | None = None) -> Config:
     args = parser.parse_args()
     inducing = args.inducing_grid_sizes
     if inducing is None:
-        inducing = [8] if args.grid_size == 16 else [8, 16]
+        inducing = [4, 8, 16]
     args.inducing_grid_sizes = tuple(dict.fromkeys(inducing))
     args.weightings = tuple(dict.fromkeys(args.weightings))
-    args.domains = tuple(dict.fromkeys(args.domains))
     args.only_models = tuple(dict.fromkeys(args.only_models))
     args.prior_diagnostic_ells = tuple(args.prior_diagnostic_ells)
     args.include_exact = not args.no_exact
@@ -327,17 +324,15 @@ def build_specs(cfg: Config):
     if cfg.include_exact:
         specs.append({"name": "deeprv_exact", "domain": "exact", "grid": cfg.grid_size, "weighting": "exact"})
     for size in cfg.inducing_grid_sizes:
-        for domain in cfg.domains:
-            for weighting in cfg.weightings:
-                suffix = "_iid" if domain == "local" else ""
-                specs.append(
-                    {
-                        "name": f"deeprv_{domain}_{weighting}_{size}x{size}{suffix}",
-                        "domain": domain,
-                        "grid": size,
-                        "weighting": weighting,
-                    }
-                )
+        for weighting in cfg.weightings:
+            specs.append(
+                {
+                    "name": f"deeprv_lowres_{weighting}_{size}x{size}",
+                    "domain": "lowres",
+                    "grid": size,
+                    "weighting": weighting,
+                }
+            )
     if cfg.only_models:
         available = {spec["name"] for spec in specs}
         missing = sorted(set(cfg.only_models).difference(available))
@@ -354,11 +349,7 @@ def build_specs(cfg: Config):
 def locations_for_spec(cfg: Config, target_s, spec):
     if spec["domain"] == "exact":
         return target_s
-    if spec["domain"] == "lowres":
-        return base.make_grid(spec["grid"], 0.0, cfg.domain_stop)
-    center = cfg.domain_stop / 2.0
-    half = cfg.domain_stop * cfg.local_region_width / 2.0
-    return base.make_grid(spec["grid"], center - half, center + half)
+    return base.make_grid(spec["grid"], 0.0, cfg.domain_stop)
 
 
 def as_base_config(cfg: Config, model_names) -> base.Config:
@@ -372,14 +363,18 @@ def as_base_config(cfg: Config, model_names) -> base.Config:
         obs_mask_type=cfg.obs_mask_type,
         train_steps=cfg.train_steps,
         batch_size=cfg.batch_size,
-        valid_steps=cfg.valid_steps,
+        validation_interval=cfg.validation_interval,
+        validation_batches=cfg.validation_batches,
         num_chains=cfg.num_chains,
         lr=cfg.lr,
         beta_true=cfg.beta_true,
         prior_loc=cfg.prior_loc,
         prior_scale=cfg.prior_scale,
         coverage_level=cfg.coverage_level,
-        checkpoint_interval=cfg.checkpoint_interval,
+        checkpoint_save_interval=cfg.checkpoint_save_interval,
+        target_accept_prob=cfg.target_accept_prob,
+        max_tree_depth=cfg.max_tree_depth,
+        init_to_median_num_samples=cfg.init_to_median_num_samples,
         initial_warmup=cfg.initial_warmup,
         initial_samples=cfg.initial_samples,
         extended_warmup=cfg.extended_warmup,
@@ -388,7 +383,6 @@ def as_base_config(cfg: Config, model_names) -> base.Config:
         min_bulk_ess=cfg.min_bulk_ess,
         min_tail_ess=cfg.min_tail_ess,
         max_relative_mcse=cfg.max_relative_mcse,
-        local_region_width=cfg.local_region_width,
         output_root=cfg.output_root,
         run_name=cfg.run_name,
         models=models,
@@ -433,13 +427,6 @@ def run_spec_prior_diagnostics(cfg, seed_dir, target_s, sample_s, spec, decoder)
     with (seed_dir / "prior_diagnostics_index.jsonl").open("a") as handle:
         handle.write(json.dumps(result, default=str, sort_keys=True) + "\n")
     return result
-
-
-def corrected_inference(cfg, budget, rng, model, y_obs, obs_mask, decoder):
-    data = {"y_full": y_obs, "obs_mask": obs_mask}
-    return corrected.run_hmc_diagnostic(
-        cfg, budget, rng, model, data, surrogate_decoder=decoder
-    )
 
 
 def write_progress(seed_dir, cfg, stage, current=None, completed=None, total=None, note=None, extra=None):
@@ -545,7 +532,7 @@ def train_spec(cfg, base_cfg, seed_dir, target_s, priors, spec):
                 if spec["domain"] == "lowres"
                 else None
             ),
-            "local_latent_noise": "injective_linear_assignment" if spec["domain"] == "local" else "injective",
+            "local_latent_noise": None,
             "fitc_factorization": "dense_cholesky" if spec["weighting"] == "fitc" else None,
         }
     )
@@ -555,11 +542,10 @@ def train_spec(cfg, base_cfg, seed_dir, target_s, priors, spec):
 
 def decoder_cache_dir(cfg: Config) -> Path:
     inducing = "-".join(map(str, cfg.inducing_grid_sizes))
-    domains = "-".join(cfg.domains)
     weightings = "-".join(cfg.weightings)
     name = (
         f"target{cfg.grid_size}_decoderseed{cfg.decoder_seed}_"
-        f"inducing{inducing}_domains{domains}_weightings{weightings}_"
+        f"inducing{inducing}_domainfull_weightings{weightings}_"
         f"ls{cfg.gt_ls:g}_steps{cfg.train_steps}"
     )
     return Path(cfg.output_root).expanduser() / "_decoder_cache" / name
@@ -579,13 +565,14 @@ def write_decoder_cache_manifest(cfg: Config, specs) -> None:
         "gt_ls": cfg.gt_ls,
         "train_steps": cfg.train_steps,
         "batch_size": cfg.batch_size,
-        "valid_steps": cfg.valid_steps,
-        "checkpoint_interval": cfg.checkpoint_interval,
+        "validation_interval": cfg.validation_interval,
+        "validation_batches": cfg.validation_batches,
+        "checkpoint_save_interval": cfg.checkpoint_save_interval,
         "prior_loc": cfg.prior_loc,
         "prior_scale": cfg.prior_scale,
         "jitter": cfg.jitter,
         "inducing_grid_sizes": list(cfg.inducing_grid_sizes),
-        "domains": list(cfg.domains),
+        "domain": "full",
         "weightings": list(cfg.weightings),
         "only_models": list(cfg.only_models),
         "include_full_gp_reference": cfg.include_full_gp_reference,
@@ -608,7 +595,6 @@ def main(default_grid_size: int | None = None):
     write_decoder_cache_manifest(cfg, specs)
     base.MODELS = base_cfg.models
     base.MODEL_IDS = {name: index for index, name in enumerate(base_cfg.models)}
-    base.run_hmc_diagnostic = corrected_inference
     numpyro.set_host_device_count(cfg.num_chains)
     wandb.init(mode="disabled")
     run_dir, seed_dir = base.prepare_dirs(base_cfg)
@@ -669,7 +655,10 @@ def main(default_grid_size: int | None = None):
             base_cfg, seed_dir, "initial", "full_gp", data, infer_model,
             None, None, None, None
         )
-        if not full[2]["diagnostics_passed"]:
+        if (
+            cfg.inference_budget == "manual-rerun"
+            and not full[2]["diagnostics_passed"]
+        ):
             write_progress(
                 seed_dir,
                 cfg,
@@ -677,7 +666,7 @@ def main(default_grid_size: int | None = None):
                 current="full_gp extended",
                 completed=completed,
                 total=total_units,
-                note="Full GP initial diagnostics failed; running extended budget.",
+                note="User-requested recovery run after failed formal diagnostics.",
             )
             print("[INFER] full_gp extended")
             full = base.run_one_inference(
@@ -739,54 +728,40 @@ def main(default_grid_size: int | None = None):
                 f"[PRIOR] {model_name}: {prior_result['status']} -> "
                 f"{prior_result['output_dir']}"
             )
-        if cfg.inference_budget == "extended":
+        write_progress(
+            seed_dir,
+            cfg,
+            "inference",
+            current=f"{model_name} formal",
+            completed=completed,
+            total=total_units,
+            note="Running or restoring the formal posterior inference.",
+            extra={"decoder_model_dir": str(model_dir)},
+        )
+        print(f"[INFER] {model_name} formal")
+        result = base.run_one_inference(
+            base_cfg, seed_dir, "initial", model_name, data, infer_model,
+            decoder, training, sample_s, reference
+        )
+        if (
+            cfg.inference_budget == "manual-rerun"
+            and not result[2]["diagnostics_passed"]
+        ):
             write_progress(
                 seed_dir,
                 cfg,
                 "inference",
-                current=f"{model_name} extended",
+                current=f"{model_name} manual recovery",
                 completed=completed,
                 total=total_units,
-                note="Running or restoring the requested extended budget directly.",
+                note="User-requested recovery run; the formal run is retained separately.",
                 extra={"decoder_model_dir": str(model_dir)},
             )
-            print(f"[INFER] {model_name} extended")
+            print(f"[INFER] {model_name} manual recovery")
             base.run_one_inference(
                 base_cfg, seed_dir, "extended", model_name, data, infer_model,
                 decoder, training, sample_s, reference
             )
-        else:
-            write_progress(
-                seed_dir,
-                cfg,
-                "inference",
-                current=f"{model_name} initial",
-                completed=completed,
-                total=total_units,
-                note="Running or restoring initial posterior inference with cached decoder.",
-                extra={"decoder_model_dir": str(model_dir)},
-            )
-            print(f"[INFER] {model_name} initial")
-            result = base.run_one_inference(
-                base_cfg, seed_dir, "initial", model_name, data, infer_model,
-                decoder, training, sample_s, reference
-            )
-            if not result[2]["diagnostics_passed"]:
-                write_progress(
-                    seed_dir,
-                    cfg,
-                    "inference",
-                    current=f"{model_name} extended",
-                    completed=completed,
-                    total=total_units,
-                    note="Initial diagnostics failed; running extended posterior inference.",
-                    extra={"decoder_model_dir": str(model_dir)},
-                )
-                print(f"[INFER] {model_name} extended")
-                base.run_one_inference(
-                    base_cfg, seed_dir, "extended", model_name, data, infer_model,
-                    decoder, training, sample_s, reference
-                )
         completed.append(model_name)
         write_progress(
             seed_dir,

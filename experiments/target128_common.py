@@ -22,6 +22,8 @@ from typing import Any, Iterable, Mapping, Sequence
 
 import numpy as np
 
+from metric_normalization import normalize_analysis_metrics
+
 TARGET_GRID_SIZE = 128
 N_TARGET = TARGET_GRID_SIZE**2
 DOMAIN_MIN = 0.0
@@ -56,6 +58,13 @@ ARCHITECTURE = {
 
 PUBLIC_SEEDS = (0, 1, 2)
 FINAL_MODELS = ('Exact128', 'Bilinear64', 'Cubic64', 'DTC64', 'FITC64')
+FORMAL_CHECKPOINT_STEPS = {
+    'Exact128': 250_000,
+    'Bilinear64': 300_000,
+    'Cubic64': 300_000,
+    'DTC64': 300_000,
+    'FITC64': None,
+}
 FULL_FACTORIAL_MODELS = tuple(
     f"{ {'bilinear': 'Bilinear', 'cubic': 'Cubic', 'dtc': 'DTC', 'fitc': 'FITC'}[weighting] }{grid}"
     for weighting in WEIGHTINGS
@@ -80,10 +89,10 @@ class Config:
     inducing_grid_sizes: tuple[int, ...] = INDUCING_GRID_SIZES
     formal_train_steps: int = 300_000
     checkpoint_steps: tuple[int, ...] = (200_000, 250_000, 300_000)
-    checkpoint_interval: int = 10_000
+    checkpoint_save_interval: int = 10_000
     microbatch_size: int = 16
     gradient_accumulation_steps: int = 1
-    valid_steps: int = 500
+    validation_batches: int = 500
     validation_interval: int = 10_000
     learning_rate: float = 5e-3
     gradient_clip_norm: float = 3.0
@@ -150,6 +159,65 @@ def write_csv(path: Path, rows: Sequence[Mapping[str, Any]]) -> None:
         os.fsync(handle.fileno())
         temporary = Path(handle.name)
     temporary.replace(path)
+
+
+def formal_checkpoint_record(model_root: Path, name: str) -> dict[str, Any]:
+    """Freeze the thesis-selected checkpoint and reject ineligible candidates."""
+
+    selected_step = FORMAL_CHECKPOINT_STEPS[name]
+    record: dict[str, Any] = {
+        "model": name,
+        "selected_step": selected_step,
+        "selection_rule": "fixed_by_final_thesis",
+        "updated_at_utc": utc_now(),
+    }
+    if selected_step is None:
+        record.update(
+            {
+                "status": "NO_ELIGIBLE_CHECKPOINT",
+                "reason": "The final thesis records no eligible FITC64 formal checkpoint.",
+            }
+        )
+        write_json(model_root / "formal_checkpoint.json", record)
+        return record
+
+    validation_path = model_root / "validation_history.csv"
+    matching_rows: list[dict[str, str]] = []
+    if validation_path.is_file():
+        with validation_path.open(newline="") as handle:
+            matching_rows = [
+                row
+                for row in csv.DictReader(handle)
+                if int(row["step"]) == selected_step
+                and str(row.get("probe", "False")).lower() not in {"true", "1"}
+            ]
+    validation_loss = (
+        parse_validation_loss(matching_rows[-1].get("validation_loss"))
+        if matching_rows
+        else math.nan
+    )
+    checkpoint_path = model_root / "checkpoints" / f"step_{selected_step:08d}"
+    if not math.isfinite(validation_loss) or not checkpoint_path.is_dir():
+        record.update(
+            {
+                "status": "NO_ELIGIBLE_CHECKPOINT",
+                "validation_loss": (
+                    validation_loss if math.isfinite(validation_loss) else "unavailable_nonfinite"
+                ),
+                "reason": "The fixed thesis checkpoint lacks a finite validation loss or checkpoint directory.",
+            }
+        )
+    else:
+        record.update(
+            {
+                "status": "ELIGIBLE",
+                "validation_loss": validation_loss,
+                "path": checkpoint_path.name,
+                "sha256": directory_sha256(checkpoint_path),
+            }
+        )
+    write_json(model_root / "formal_checkpoint.json", record)
+    return record
 
 def run_training(cfg: Config, name: str, *, probe: bool) -> dict[str, Any]:
     root = resolved_root(cfg)
@@ -226,12 +294,18 @@ def run_training(cfg: Config, name: str, *, probe: bool) -> dict[str, Any]:
                 flush=True,
             )
         should_validate = step_number % cfg.validation_interval == 0 or step_number == total_steps
-        should_checkpoint = step_number % cfg.checkpoint_interval == 0 or step_number == total_steps
+        should_checkpoint = step_number % cfg.checkpoint_save_interval == 0 or step_number == total_steps
         validation_metric = None
         validation_seconds = 0.0
         if should_validate:
             valid_started = perf_counter()
-            validation_metric = evaluate_training(runtime, state, generator, runtime["random"].fold_in(valid_key, step_number), cfg.valid_steps)
+            validation_metric = evaluate_training(
+                runtime,
+                state,
+                generator,
+                runtime["random"].fold_in(valid_key, step_number),
+                cfg.validation_batches,
+            )
             validation_seconds = perf_counter() - valid_started
             validation_seconds_total += validation_seconds
             if validation_metric < best_metric:
@@ -266,8 +340,17 @@ def run_training(cfg: Config, name: str, *, probe: bool) -> dict[str, Any]:
                 },
             )
     total_seconds = perf_counter() - started
+    formal_checkpoint = None if probe else formal_checkpoint_record(model_root, name)
     result = {
-        "status": "RUNTIME_CALIBRATION_NOT_FOR_ANALYSIS" if probe else "PASS",
+        "status": (
+            "RUNTIME_CALIBRATION_NOT_FOR_ANALYSIS"
+            if probe
+            else (
+                "PASS"
+                if formal_checkpoint["status"] == "ELIGIBLE"
+                else formal_checkpoint["status"]
+            )
+        ),
         "model": name,
         "probe": probe,
         "steps": total_steps,
@@ -281,6 +364,7 @@ def run_training(cfg: Config, name: str, *, probe: bool) -> dict[str, Any]:
         "total_seconds": total_seconds,
         "seconds_per_step_overall": total_seconds / max(total_steps, 1),
         "best_validation_loss": best_metric,
+        "formal_checkpoint": formal_checkpoint,
         "effective_batch_size": cfg.microbatch_size * cfg.gradient_accumulation_steps,
         "microbatch_size": cfg.microbatch_size,
         "gradient_accumulation_steps": cfg.gradient_accumulation_steps,
@@ -913,10 +997,28 @@ def finish_nuts_postprocessing(
             "created_at_utc": utc_now(),
             "mode": "nuts_postprocess",
             "model": name,
+            "target_grid_size": cfg.target_grid_size,
             "data_seed": seed,
             "raw_posterior_sha256": sha256_file(raw_path),
             "diagnostics_sha256": sha256_file(output_dir / "diagnostics.json"),
             "checkpoint_sha256": checkpoint_info["checkpoint_sha256"],
+            "checkpoint_step": checkpoint_info["checkpoint_step"],
+            "checkpoint_selection_rule": checkpoint_info[
+                "checkpoint_selection_rule"
+            ],
+            "checkpoint_validation_loss": checkpoint_info[
+                "checkpoint_validation_loss"
+            ],
+            "posterior_lengthscale_mean": posterior_summary["ell"]["mean"],
+            "posterior_lengthscale_median": posterior_summary["ell"]["median"],
+            "posterior_lengthscale_sd": posterior_summary["ell"]["std"],
+            "posterior_lengthscale_q05": posterior_summary["ell"]["q05"],
+            "posterior_lengthscale_q95": posterior_summary["ell"]["q95"],
+            "posterior_beta_mean": posterior_summary["beta"]["mean"],
+            "posterior_beta_median": posterior_summary["beta"]["median"],
+            "posterior_beta_sd": posterior_summary["beta"]["std"],
+            "posterior_beta_q05": posterior_summary["beta"]["q05"],
+            "posterior_beta_q95": posterior_summary["beta"]["q95"],
             "checkpoint_integrity_policy": checkpoint_info.get(
                 "inference_checkpoint_integrity_policy", "strict_hash"
             ),
@@ -973,6 +1075,7 @@ def finish_nuts_postprocessing(
             "probe": probe,
         }
     )
+    metrics = normalize_analysis_metrics(metrics)
     write_json(output_dir / "metrics.json", metrics)
     write_csv(output_dir / "metrics.csv", [metrics])
     plot_posterior_maps(output_dir, data, mu, obs)
@@ -1630,16 +1733,50 @@ def generate_public_dataset(cfg: Config, seed: int) -> dict[str, np.ndarray]:
     return generate_seed_payload(runtime, cfg, factor, seed)
 
 def load_trained_decoder(runtime: Mapping[str, Any], cfg: Config, name: str):
-    checkpoint_dir = training_dir(resolved_root(cfg), name) / 'checkpoints'
-    latest = json.loads((checkpoint_dir / 'latest.json').read_text())
-    path = checkpoint_dir / latest['path']
-    if directory_sha256(path) != latest['sha256']:
+    model_root = training_dir(resolved_root(cfg), name)
+    formal_path = model_root / 'formal_checkpoint.json'
+    if not formal_path.is_file():
+        raise RuntimeError(
+            f'Formal inference refused: missing formal checkpoint record for {name}.'
+        )
+    formal = json.loads(formal_path.read_text())
+    if formal.get('status') != 'ELIGIBLE':
+        raise RuntimeError(
+            f"Formal inference refused for {name}: "
+            f"{formal.get('status', 'NO_ELIGIBLE_CHECKPOINT')}."
+        )
+    expected_step = FORMAL_CHECKPOINT_STEPS[name]
+    if formal.get('selected_step') != expected_step or expected_step is None:
+        raise RuntimeError(f'Formal checkpoint selection mismatch for {name}.')
+    validation_loss = parse_validation_loss(formal.get('validation_loss'))
+    if not math.isfinite(validation_loss):
+        raise RuntimeError(f'Formal checkpoint validation loss is non-finite for {name}.')
+    checkpoint_dir = model_root / 'checkpoints'
+    path = checkpoint_dir / formal['path']
+    checkpoint_hash = directory_sha256(path)
+    if checkpoint_hash != formal['sha256']:
         raise RuntimeError(f'Checkpoint hash mismatch: {path}')
     payload = runtime['PyTreeCheckpointer']().restore(path.absolute())
+    if int(np.asarray(payload['step'])) != expected_step:
+        raise RuntimeError(
+            f'Checkpoint step mismatch for {name}: '
+            f"{int(np.asarray(payload['step']))} != {expected_step}."
+        )
     model = runtime['gMLPDeepRV'](num_blks=2)
-    state = runtime['TrainState'].create(apply_fn=model.apply, params=payload['best_params'], kwargs=payload['best_kwargs'], tx=optimizer_for(runtime, cfg))
+    state = runtime['TrainState'].create(
+        apply_fn=model.apply,
+        params=payload['params'],
+        kwargs=payload['kwargs'],
+        tx=optimizer_for(runtime, cfg),
+    )
     decoder = runtime['generate_surrogate_decoder'](state, model)
-    return decoder, {'checkpoint_sha256': latest['sha256'], 'checkpoint_restore_validated': True}
+    return decoder, {
+        'checkpoint_sha256': checkpoint_hash,
+        'checkpoint_step': expected_step,
+        'checkpoint_selection_rule': 'fixed_by_final_thesis',
+        'checkpoint_validation_loss': validation_loss,
+        'checkpoint_restore_validated': True,
+    }
 
 def diagnostic_gate(cfg: Config, diagnostics: Mapping[str, Any]) -> tuple[str, list[str]]:
     threshold = cfg.single_chain_thresholds

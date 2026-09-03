@@ -55,6 +55,7 @@ from model_checks import (
     compute_truth_relative_metrics,
     write_metric_schema,
 )
+from metric_normalization import normalize_analysis_metrics
 
 matplotlib.use("Agg")
 import matplotlib.pyplot as plt  # noqa: E402
@@ -63,28 +64,11 @@ import matplotlib.pyplot as plt  # noqa: E402
 MODELS = (
     "full_gp",
     "deeprv_exact",
-    "deeprv_lowres_8x8",
-    "deeprv_lowres_12x12",
-    "deeprv_lowres_16x16",
-    "deeprv_lowres_24x24",
-    "deeprv_local_8x8",
-    "deeprv_local_16x16",
-    "deeprv_local_32x32",
 )
 BUDGETS = ("initial", "extended")
 MODEL_IDS = {name: index for index, name in enumerate(MODELS)}
 BUDGET_IDS = {name: index for index, name in enumerate(BUDGETS)}
-PRETRAIN_GRID_SIZES = {
-    "deeprv_lowres_8x8": 8,
-    "deeprv_lowres_12x12": 12,
-    "deeprv_lowres_16x16": 16,
-    "deeprv_lowres_24x24": 24,
-}
-LOCAL_GRID_SIZES = {
-    "deeprv_local_8x8": 8,
-    "deeprv_local_16x16": 16,
-    "deeprv_local_32x32": 32,
-}
+PRETRAIN_GRID_SIZES: dict[str, int] = {}
 
 
 @dataclass
@@ -94,10 +78,11 @@ class Config:
     domain_stop: float = 100.0
     gt_ls: float = 30.0
     obs_ratio: float = 0.5
-    obs_mask_type: str = "spatial"
+    obs_mask_type: str = "uniform"
     train_steps: int = 200_000
     batch_size: int = 32
-    valid_steps: int = 500
+    validation_interval: int = 500
+    validation_batches: int = 500
     mcmc_warmup: int = 4_000
     mcmc_samples: int = 6_000
     num_chains: int = 2
@@ -106,7 +91,10 @@ class Config:
     prior_loc: float = 3.0
     prior_scale: float = 0.4
     coverage_level: float = 0.9
-    checkpoint_interval: int = 10_000
+    checkpoint_save_interval: int = 10_000
+    target_accept_prob: float = 0.8
+    max_tree_depth: int = 10
+    init_to_median_num_samples: int = 10
     initial_warmup: int = 1_000
     initial_samples: int = 4_000
     extended_warmup: int = 1_000
@@ -115,15 +103,13 @@ class Config:
     min_bulk_ess: float = 400.0
     min_tail_ess: float = 400.0
     max_relative_mcse: float = 0.05
-    local_region_width: float = 0.5
-    output_root: str = "outputs/deeprv_32x32_poisson_gp_pilot"
-    run_name: str = "poisson_gp_32x32_ls30_pilot"
+    output_root: str = "outputs/grid32"
+    run_name: str = "grid32_thesis_comparison"
     models: tuple[str, ...] = (
         "full_gp",
         "deeprv_exact",
-        "deeprv_lowres_8x8",
     )
-    auto_extend_failed: bool = True
+    manual_rerun_failed: bool = False
     prepare_data_only: bool = False
     force_rerun: bool = False
     run_truth_metrics: bool = False
@@ -155,7 +141,12 @@ def parse_args() -> Config:
     )
     parser.add_argument("--train-steps", type=int, default=Config.train_steps)
     parser.add_argument("--batch-size", type=int, default=Config.batch_size)
-    parser.add_argument("--valid-steps", type=int, default=Config.valid_steps)
+    parser.add_argument(
+        "--validation-interval", type=int, default=Config.validation_interval
+    )
+    parser.add_argument(
+        "--validation-batches", type=int, default=Config.validation_batches
+    )
     parser.add_argument("--num-chains", type=int, default=Config.num_chains)
     parser.add_argument(
         "--initial-warmup", type=int, default=Config.initial_warmup
@@ -175,16 +166,24 @@ def parse_args() -> Config:
     parser.add_argument(
         "--max-relative-mcse", type=float, default=Config.max_relative_mcse
     )
-    parser.add_argument(
-        "--local-region-width", type=float, default=Config.local_region_width
-    )
     parser.add_argument("--lr", type=float, default=Config.lr)
     parser.add_argument("--beta-true", type=float, default=Config.beta_true)
     parser.add_argument("--prior-loc", type=float, default=Config.prior_loc)
     parser.add_argument("--prior-scale", type=float, default=Config.prior_scale)
     parser.add_argument("--coverage-level", type=float, default=Config.coverage_level)
     parser.add_argument(
-        "--checkpoint-interval", type=int, default=Config.checkpoint_interval
+        "--checkpoint-save-interval",
+        type=int,
+        default=Config.checkpoint_save_interval,
+    )
+    parser.add_argument(
+        "--target-accept-prob", type=float, default=Config.target_accept_prob
+    )
+    parser.add_argument("--max-tree-depth", type=int, default=Config.max_tree_depth)
+    parser.add_argument(
+        "--init-to-median-num-samples",
+        type=int,
+        default=Config.init_to_median_num_samples,
     )
     parser.add_argument("--output-root", type=str, default=Config.output_root)
     parser.add_argument("--run-name", type=str, default=Config.run_name)
@@ -192,9 +191,9 @@ def parse_args() -> Config:
         "--models", nargs="+", choices=MODELS, default=list(Config.models)
     )
     parser.add_argument(
-        "--no-auto-extend-failed",
-        action="store_false",
-        dest="auto_extend_failed",
+        "--manual-rerun-failed",
+        action="store_true",
+        help="Write separate recovery runs for failed formal diagnostics.",
     )
     parser.add_argument("--prepare-data-only", action="store_true")
     parser.add_argument("--force-rerun", action="store_true")
@@ -209,17 +208,18 @@ def parse_args() -> Config:
     args.mcmc_samples = args.extended_samples
     cfg = Config(**vars(args))
     if cfg.grid_size != 32:
-        raise ValueError("This pilot requires --grid-size 32.")
+        raise ValueError("This experiment requires --grid-size 32.")
     if cfg.num_chains < 2:
         raise ValueError("Use at least two chains for R-hat diagnostics.")
     if min(
         cfg.train_steps,
-        cfg.valid_steps,
+        cfg.validation_interval,
+        cfg.validation_batches,
         cfg.initial_warmup,
         cfg.initial_samples,
         cfg.extended_warmup,
         cfg.extended_samples,
-        cfg.checkpoint_interval,
+        cfg.checkpoint_save_interval,
     ) < 1:
         raise ValueError("Training, MCMC, and checkpoint values must be positive.")
     if min(
@@ -229,8 +229,6 @@ def parse_args() -> Config:
         cfg.max_relative_mcse,
     ) <= 0:
         raise ValueError("Diagnostic thresholds must be positive.")
-    if not 0.0 < cfg.local_region_width <= 1.0:
-        raise ValueError("--local-region-width must be in (0, 1].")
     if "full_gp" not in cfg.models:
         raise ValueError("Include full_gp as the posterior reference.")
     if not cfg.prepare_data_only and "deeprv_exact" not in cfg.models:
@@ -753,11 +751,11 @@ def evaluate_model(
     cfg: Config, state: TrainState, generate_batch: Callable, base_key: Array
 ) -> float:
     def loader(_):
-        for index in range(cfg.valid_steps):
+        for index in range(cfg.validation_batches):
             yield generate_batch(random.fold_in(base_key, index))
 
     return float(
-        evaluate(base_key, state, valid_step, loader, cfg.valid_steps)["norm MSE"]
+        evaluate(base_key, state, valid_step, loader, cfg.validation_batches)["norm MSE"]
     )
 
 
@@ -820,6 +818,7 @@ def train_deeprv(
             json.loads(result_path.read_text()),
         )
     start = perf_counter()
+    last_validation_metric = None
     for step in range(int(state.step) + 1, cfg.train_steps + 1):
         gp_start = perf_counter()
         batch = generate_batch(random.fold_in(train_key, step))
@@ -831,13 +830,24 @@ def train_deeprv(
         )
         jax.block_until_ready((state.params, loss))
         optimization_time += perf_counter() - optimization_start
-        if step % cfg.checkpoint_interval == 0 or step == cfg.train_steps:
-            metric = evaluate_model(
+        should_validate = (
+            step % cfg.validation_interval == 0 or step == cfg.train_steps
+        )
+        should_checkpoint = (
+            step % cfg.checkpoint_save_interval == 0 or step == cfg.train_steps
+        )
+        if should_validate:
+            last_validation_metric = evaluate_model(
                 cfg, state, generate_batch, random.fold_in(valid_key, step)
             )
-            if metric < best_metric:
-                best_metric = metric
+            if last_validation_metric < best_metric:
+                best_metric = last_validation_metric
                 best_params, best_kwargs = state.params, state.kwargs
+            print(
+                f"{model_name}: step={step} loss={float(loss):.6g} "
+                f"valid={last_validation_metric:.6g}"
+            )
+        if should_checkpoint:
             elapsed = previous_time + perf_counter() - start
             save_training_checkpoint(
                 checkpoint_dir,
@@ -848,10 +858,6 @@ def train_deeprv(
                 elapsed,
                 gp_time,
                 optimization_time,
-            )
-            print(
-                f"{model_name}: step={step} loss={float(loss):.6g} "
-                f"valid={metric:.6g}"
             )
     result = {
         "train_time": previous_time + perf_counter() - start,
@@ -914,12 +920,18 @@ def summarize_model(
     y_hat = posterior["obs"].mean(axis=0)
     row = {
         "seed": cfg.seed,
+        "grid_size": cfg.grid_size,
         "model_name": model_name,
         "num_pretrain_locations": (
             None if sample_s is None else int(sample_s.shape[0])
         ),
         "posterior_mean_ls": float(samples["ls"].mean()),
         "posterior_mean_beta": float(samples["beta"].mean()),
+        "posterior_median_beta": float(np.median(np.asarray(samples["beta"]))),
+        "posterior_sd_beta": float(np.asarray(samples["beta"]).std(ddof=1)),
+        "posterior_q05_beta": float(np.quantile(np.asarray(samples["beta"]), 0.05)),
+        "posterior_q95_beta": float(np.quantile(np.asarray(samples["beta"]), 0.95)),
+        "posterior_sd_ls": float(np.asarray(samples["ls"]).std(ddof=1)),
         "ESS_ls": ess.get("ls"),
         "ESS_beta": ess.get("beta"),
         "infer_time": infer_time,
@@ -1048,7 +1060,6 @@ def prepare_dirs(cfg: Config) -> tuple[Path, Path]:
     if manifest.exists():
         previous = json.loads(manifest.read_text())
         previous.pop("models", None)
-        previous.setdefault("local_region_width", cfg.local_region_width)
         if previous != current:
             raise ValueError(
                 f"Configuration mismatch in {run_dir}; use a new run name."
@@ -1079,14 +1090,6 @@ def pretrain_locations(cfg: Config, target_s: Array, model_name: str) -> Array:
     if model_name in PRETRAIN_GRID_SIZES:
         return make_grid(
             PRETRAIN_GRID_SIZES[model_name], 0.0, cfg.domain_stop
-        )
-    if model_name in LOCAL_GRID_SIZES:
-        center = cfg.domain_stop / 2.0
-        half_width = cfg.domain_stop * cfg.local_region_width / 2.0
-        return make_grid(
-            LOCAL_GRID_SIZES[model_name],
-            center - half_width,
-            center + half_width,
         )
     raise ValueError(f"No pretraining locations for {model_name}.")
 
@@ -1263,7 +1266,14 @@ def run_hmc_diagnostic(
     surrogate_decoder: Optional[Callable],
 ) -> tuple[dict, dict, float, dict]:
     warmup, draws = budget_values(cfg, budget)
-    nuts = NUTS(model, init_strategy=init_to_median(num_samples=10))
+    nuts = NUTS(
+        model,
+        init_strategy=init_to_median(
+            num_samples=cfg.init_to_median_num_samples
+        ),
+        target_accept_prob=cfg.target_accept_prob,
+        max_tree_depth=cfg.max_tree_depth,
+    )
     mcmc = MCMC(
         nuts,
         num_chains=cfg.num_chains,
@@ -1278,7 +1288,7 @@ def run_hmc_diagnostic(
         surrogate_decoder=surrogate_decoder,
         obs_mask=obs_mask,
         y=y_obs,
-        extra_fields=("diverging",),
+        extra_fields=("diverging", "num_steps"),
     )
     infer_time = perf_counter() - start
     samples_chain = {
@@ -1317,6 +1327,13 @@ def run_hmc_diagnostic(
         "mcmc_samples_per_chain": draws,
         "num_chains": cfg.num_chains,
         "num_divergences": int(np.asarray(extra["diverging"]).sum()),
+        "max_tree_depth_hits": int(
+            np.sum(
+                np.asarray(extra["num_steps"]).reshape(-1)
+                >= 2**cfg.max_tree_depth - 1
+            )
+        ),
+        "max_tree_depth": cfg.max_tree_depth,
         "nuts_inference_time": infer_time,
         "posterior_predictive_time": posterior_predictive_time,
         "inference_total_time": infer_time + posterior_predictive_time,
@@ -1578,6 +1595,7 @@ def run_one_inference(
             ),
         }
     )
+    metrics = normalize_analysis_metrics(metrics)
     save_inference(output_dir, samples_chain, posterior, metrics, diagnostics)
     plot_chain_diagnostics(
         output_dir,
@@ -1783,11 +1801,11 @@ def main() -> None:
             "evaluated_at_utc": utc_now(),
             "failed_models": failed_models,
             "evaluated_models": list(initial_results),
-            "auto_extend_failed": cfg.auto_extend_failed,
+            "manual_rerun_failed": cfg.manual_rerun_failed,
         },
     )
-    if cfg.auto_extend_failed and failed_models:
-        print("Extending failed models:", failed_models)
+    if cfg.manual_rerun_failed and failed_models:
+        print("Running user-requested recovery runs:", failed_models)
         extended_full = None
         if "full_gp" in failed_models:
             extended_full = run_one_inference(

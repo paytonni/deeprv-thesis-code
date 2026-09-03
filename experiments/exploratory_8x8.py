@@ -56,7 +56,8 @@ class Config:
     obs_ratio: float = 0.5
     train_steps: int = 200_000
     batch_size: int = 32
-    valid_steps: int = 500
+    validation_interval: int = 10_000
+    validation_batches: int = 500
     mcmc_warmup: int = 4_000
     mcmc_samples: int = 6_000
     num_chains: int = 2
@@ -82,7 +83,12 @@ def parse_args() -> Config:
     parser.add_argument("--obs-ratio", type=float, default=Config.obs_ratio)
     parser.add_argument("--train-steps", type=int, default=Config.train_steps)
     parser.add_argument("--batch-size", type=int, default=Config.batch_size)
-    parser.add_argument("--valid-steps", type=int, default=Config.valid_steps)
+    parser.add_argument(
+        "--validation-interval", type=int, default=Config.validation_interval
+    )
+    parser.add_argument(
+        "--validation-batches", type=int, default=Config.validation_batches
+    )
     parser.add_argument("--mcmc-warmup", type=int, default=Config.mcmc_warmup)
     parser.add_argument("--mcmc-samples", type=int, default=Config.mcmc_samples)
     parser.add_argument("--num-chains", type=int, default=Config.num_chains)
@@ -294,7 +300,7 @@ def train_deeprv(
     loader = gen_train_dataloader(target_s, sample_s, priors, cfg.batch_size)
     lr_schedule = cosine_annealing_lr(cfg.train_steps, cfg.lr)
     optimizer = optax.chain(optax.clip_by_global_norm(3.0), optax.yogi(lr_schedule))
-    valid_interval = max(1, min(10_000, cfg.train_steps))
+    validation_interval = max(1, min(cfg.validation_interval, cfg.train_steps))
     start = perf_counter()
     state = train(
         rng_train,
@@ -304,15 +310,17 @@ def train_deeprv(
         cfg.train_steps,
         loader,
         valid_step,
-        valid_interval,
-        cfg.valid_steps,
+        validation_interval,
+        cfg.validation_batches,
         loader,
         return_state="best",
         valid_monitor_metric="norm MSE",
         log_loss_interval=max(1, min(1_000, cfg.train_steps)),
     )
     train_time = perf_counter() - start
-    eval_mse = evaluate(rng_test, state, valid_step, loader, cfg.valid_steps)["norm MSE"]
+    eval_mse = evaluate(
+        rng_test, state, valid_step, loader, cfg.validation_batches
+    )["norm MSE"]
     return model, state, generate_surrogate_decoder(state, model), train_time, float(eval_mse)
 
 
