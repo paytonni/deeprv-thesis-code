@@ -1,4 +1,4 @@
-"""Final 64x64 DeepRV comparison using full-domain inducing grids."""
+"""Run the 64x64 DeepRV comparison using full-domain inducing grids."""
 
 from __future__ import annotations
 

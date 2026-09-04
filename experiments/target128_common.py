@@ -1,4 +1,4 @@
-"""Final Target-128 DeepRV training and posterior inference."""
+"""Training and posterior inference utilities for the Target-128 experiment."""
 from __future__ import annotations
 
 import argparse
@@ -162,8 +162,9 @@ def write_csv(path: Path, rows: Sequence[Mapping[str, Any]]) -> None:
 
 
 def formal_checkpoint_record(model_root: Path, name: str) -> dict[str, Any]:
-    """Freeze the thesis-selected checkpoint and reject ineligible candidates."""
+    """Resolve the checkpoint used for formal inference."""
 
+    # Use the checkpoint reported in the thesis for formal inference.
     selected_step = FORMAL_CHECKPOINT_STEPS[name]
     record: dict[str, Any] = {
         "model": name,
@@ -175,7 +176,7 @@ def formal_checkpoint_record(model_root: Path, name: str) -> dict[str, Any]:
         record.update(
             {
                 "status": "NO_ELIGIBLE_CHECKPOINT",
-                "reason": "The final thesis records no eligible FITC64 formal checkpoint.",
+                "reason": "FITC64 has no eligible checkpoint for formal inference.",
             }
         )
         write_json(model_root / "formal_checkpoint.json", record)
@@ -204,7 +205,7 @@ def formal_checkpoint_record(model_root: Path, name: str) -> dict[str, Any]:
                 "validation_loss": (
                     validation_loss if math.isfinite(validation_loss) else "unavailable_nonfinite"
                 ),
-                "reason": "The fixed thesis checkpoint lacks a finite validation loss or checkpoint directory.",
+                "reason": "The checkpoint used for formal inference lacks a finite validation loss or checkpoint directory.",
             }
         )
     else:
@@ -293,6 +294,7 @@ def run_training(cfg: Config, name: str, *, probe: bool) -> dict[str, Any]:
                 f" estimated_remaining_hours={remaining / 3600:.3f}",
                 flush=True,
             )
+        # Validation and persistent checkpoints use separate intervals.
         should_validate = step_number % cfg.validation_interval == 0 or step_number == total_steps
         should_checkpoint = step_number % cfg.checkpoint_save_interval == 0 or step_number == total_steps
         validation_metric = None

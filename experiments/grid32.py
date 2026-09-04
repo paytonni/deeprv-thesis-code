@@ -1,4 +1,4 @@
-"""Final 32x32 DeepRV comparison using full-domain inducing grids."""
+"""Run the 32x32 DeepRV comparison using full-domain inducing grids."""
 
 from __future__ import annotations
 

@@ -562,7 +562,7 @@ def main() -> None:
             ("posterior_lengthscale_sd", "SD($\\ell$)", 3),
         ],
     )
-    # Submitted Table 8 labels this column "Count MSE"; its values use the
+    # Table 8 labels this column "Count MSE"; the values use the
     # realised-count log1p MSE defined in Methods Section 2.6.
     supplementary_per_seed_table(
         systematic_long,

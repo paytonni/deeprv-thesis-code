@@ -1,8 +1,7 @@
 """Shared model diagnostics for the synthetic DeepRV experiments.
 
-This module is deliberately independent of notebook state.  It records the
-JAX/XLA backend, computes accuracy against the simulated latent/rate truth,
-and compares a frozen DeepRV prior with its GP/teacher references.
+The checks record the JAX/XLA backend, compare estimates with the simulated
+latent and rate truth, and compare a frozen DeepRV prior with its GP references.
 """
 
 from __future__ import annotations

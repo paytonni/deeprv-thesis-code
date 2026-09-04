@@ -1,6 +1,6 @@
 # Approximate Gaussian Process Constructions for DeepRV Pretraining
 
-This repository accompanies the MSc Statistics thesis *Approximate Gaussian Process Constructions for DeepRV Pretraining: Effects on Posterior Inference and Computational Cost*. It studies how Exact, Bilinear, Cubic, DTC and FITC Gaussian-process constructions used during DeepRV pretraining affect posterior inference and computational cost.
+This repository contains the simulation, DeepRV pretraining and posterior inference code used in the MSc Statistics thesis *Approximate Gaussian Process Constructions for DeepRV Pretraining: Effects on Posterior Inference and Computational Cost*. The experiments compare Exact, Bilinear, Cubic, DTC and FITC Gaussian-process constructions and their effects on posterior inference and computational cost.
 
 ## Contents
 
@@ -8,10 +8,11 @@ This repository accompanies the MSc Statistics thesis *Approximate Gaussian Proc
 - `notebooks/02_support_and_spacing_16x16.ipynb`: 16 x 16 support and inducing-spacing comparisons.
 - `notebooks/03_systematic_comparison_32x32.ipynb`: Full GP, Exact and full-domain Bilinear/Cubic/DTC/FITC DeepRV comparisons at inducing sides 4, 8 and 16.
 - `notebooks/04_scaled_comparison_64x64.ipynb`: the corresponding DeepRV comparison at sides 8, 16 and 32, plus the matched Direct GP comparison.
-- `notebooks/05_target128_scaling_frontier.ipynb`: thesis-fixed Target-128 checkpoints and the Full GP128 feasibility probe.
-- `experiments/`: simulation, DeepRV pretraining, frozen-decoder inference, matched Direct GP inference, diagnostics, metrics and runtime accounting.
-- `analysis/prepare_analysis_inputs.py`: normalizes completed metric outputs and builds deterministic three-seed summaries.
-- `analysis/figures/` and `analysis/tables/`: scripts used to generate the thesis figures and tables from analysis-ready inputs.
+- `notebooks/05_target128_scaling_frontier.ipynb`: Target-128 inference using the checkpoints reported in the thesis, plus the Full GP128 feasibility probe.
+- `experiments/`: runs simulation, DeepRV pretraining and inference, with supporting diagnostics, metrics and runtime accounting.
+- `analysis/prepare_analysis_inputs.py`: converts generated experiment metrics into analysis-ready inputs and three-seed summaries.
+- `analysis/figures/`: generates thesis figures from prepared inputs and, where needed, external posterior outputs.
+- `analysis/tables/`: generates the thesis tables.
 
 The public datasets are generated with Seed 0, Seed 1 and Seed 2. The 32 x 32 and 64 x 64 experiments use two NUTS chains, 1,000 warmup iterations per chain and 4,000 retained draws per chain. Target-128 uses one chain, 4,000 warmup iterations and 6,000 retained draws. Formal Target-128 inference uses Exact128 at step 250,000 and Bilinear64, Cubic64 and DTC64 at step 300,000; FITC64 has no eligible formal checkpoint. The Full GP128 entry point is a feasibility and runtime probe only.
 
@@ -29,7 +30,7 @@ DeepRV is supplied by the pinned upstream `dl4bi` dependency; the upstream repos
 
 Run one of the five notebooks from the repository root. Each notebook calls the corresponding scripts in `experiments/` and exposes controls for its experiment components.
 
-The matched Direct GP comparison in Notebook 04 is resource-intensive and therefore disabled by default. Enable `RUN_DIRECT_GP_COMPARISON` to reproduce the complete 64 x 64 matched Direct GP comparison. Notebook 03 intentionally contains no Direct GP comparison.
+The matched Direct GP comparison in Notebook 04 is disabled by default because it is resource-intensive. Enable `RUN_DIRECT_GP_COMPARISON` to run the complete 64 x 64 comparison. Notebook 03 contains no Direct GP comparison.
 
 ## Preparing figures and tables
 
@@ -41,7 +42,7 @@ python analysis/prepare_analysis_inputs.py \
   --output-dir /path/to/analysis-data
 ```
 
-This writes `results_long.csv` plus three-seed `results_aggregate.csv` summaries using the mean, sample standard deviation (`ddof=1`) and `n`. Point the figure scripts at that directory with `DEEPRV_ANALYSIS_DATA_ROOT`, or pass `--analysis-data` to `analysis/tables/build_result_tables.py`. The configuration table is generated directly from the public experiment `Config` defaults and `experiments/configs/target128.json`:
+This writes `results_long.csv` and three-seed `results_aggregate.csv` summaries using the mean, sample standard deviation (`ddof=1`) and `n`. Set `DEEPRV_ANALYSIS_DATA_ROOT` to this directory for the figure scripts, or pass it to `analysis/tables/build_result_tables.py` with `--analysis-data`. The configuration table is generated directly from the experiment `Config` defaults and `experiments/configs/target128.json`:
 
 ```bash
 DEEPRV_ANALYSIS_DATA_ROOT=/path/to/analysis-data python analysis/figures/fig03_grid64_integrated.py
@@ -49,6 +50,6 @@ python analysis/tables/build_result_tables.py --analysis-data /path/to/analysis-
 python analysis/tables/build_configuration_table.py
 ```
 
-Posterior-map figures additionally require the generated posterior artifacts. Set `DEEPRV_RESULTS_ROOT` to a directory containing the repository's normal output layout, including `outputs/grid32/grid32_thesis_comparison/` and both `outputs/grid64/grid64_thesis_comparison/` and `outputs/grid64_direct_gp/grid64_direct_gp/` for the matched Seed 0 maps.
+Posterior-map figures also require the corresponding posterior outputs, which are not included in the repository. Set `DEEPRV_RESULTS_ROOT` to a directory containing the normal output layout, including `outputs/grid32/grid32_thesis_comparison/` and both `outputs/grid64/grid64_thesis_comparison/` and `outputs/grid64_direct_gp/grid64_direct_gp/` for the matched Seed 0 maps.
 
-Experiment outputs are generated at runtime. No scientific result files, checkpoints, posterior samples or generated figures are committed. The larger experiments require substantial GPU memory and runtime; no training or NUTS run is needed to inspect the source.
+Experiment outputs are generated at runtime. Checkpoints, posterior samples, result files and generated figures are not included. The larger experiments require substantial GPU memory and runtime; no training or NUTS run is needed to inspect the source.

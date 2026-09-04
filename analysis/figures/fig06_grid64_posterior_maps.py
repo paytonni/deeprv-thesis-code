@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Figure 6: prespecified Seed-0 64x64 posterior predictive maps."""
+"""Generate the Seed-0 posterior predictive maps for Figure 6."""
 
 from __future__ import annotations
 

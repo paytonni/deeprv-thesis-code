@@ -1,7 +1,7 @@
 """Measure exact Full-GP NUTS feasibility at the 128 x 128 target grid.
 
-This is deliberately a runtime probe. It writes timing and device metadata;
-the short chain is not a scientific posterior result.
+The short run records timing and device metadata and is not used as a
+posterior result.
 """
 from __future__ import annotations
 
@@ -54,6 +54,7 @@ def build_model(runtime, coordinates, counts, mask, jitter):
             "z", dist.Normal(0.0, 1.0).expand((target.N_TARGET,)).to_event(1)
         )
         covariance = matern_1_2(coordinates, coordinates, 1.0, ell)
+        # Add jitter for numerical stability in the Cholesky factorization.
         covariance = target.add_diagonal_jitter(jnp, covariance, jitter)
         latent = jnp.linalg.cholesky(covariance) @ z
         with numpyro.handlers.mask(mask=mask):
