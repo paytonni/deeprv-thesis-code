@@ -85,8 +85,8 @@ class Config:
     prior_scale: float = 0.4
     coverage_level: float = 0.9
     checkpoint_save_interval: int = 10_000
-    output_root: str = "outputs/deeprv_paperlike_16x16_pretraining_comparison"
-    run_name: str = "paperlike16x16_matern12_ls30"
+    output_root: str = "outputs/exploratory_16x16"
+    run_name: str = "support16x16_matern12_ls30"
     models: tuple[str, ...] = ALL_MODELS
     force_rerun: bool = False
 

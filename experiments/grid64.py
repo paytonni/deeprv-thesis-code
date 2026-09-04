@@ -389,10 +389,10 @@ def write_progress(seed_dir, cfg, stage, current=None, completed=None, total=Non
     )
 
 
-def audit_observation_mask(cfg, seed_dir, data):
+def verify_observation_mask(cfg, seed_dir, data):
     mask = jnp.asarray(data["obs_mask"])
     observed_indices = np.asarray(jnp.argwhere(mask).reshape(-1))
-    audit = {
+    validation = {
         "created_at_utc": base.utc_now(),
         "seed": cfg.seed,
         "data_mask_seed": cfg.seed,
@@ -411,16 +411,16 @@ def audit_observation_mask(cfg, seed_dir, data):
             rng_mask, (cfg.grid_size, cfg.grid_size), cfg.obs_ratio
         )
         matches = bool(jnp.array_equal(mask, expected))
-        audit["matches_regenerated_uniform_mask"] = matches
+        validation["matches_regenerated_uniform_mask"] = matches
         if not matches:
-            base.write_json(seed_dir / "mask_audit.json", audit)
+            base.write_json(seed_dir / "mask_validation.json", validation)
             raise ValueError(
                 "Saved observation mask does not match the deterministic "
                 "uniform random mask for this seed/config."
             )
-    base.write_json(seed_dir / "mask_audit.json", audit)
-    print("Mask audit:", json.dumps(audit, indent=2))
-    return audit
+    base.write_json(seed_dir / "mask_validation.json", validation)
+    print("Mask validation:", json.dumps(validation, indent=2))
+    return validation
 
 
 def train_spec(cfg, base_cfg, seed_dir, target_s, priors, spec):
@@ -562,7 +562,7 @@ def main(default_grid_size: int | None = None):
     )
     target_s = base.make_grid(cfg.grid_size, 0.0, cfg.domain_stop)
     data = base.load_or_create_data(base_cfg, seed_dir, target_s)
-    audit_observation_mask(cfg, seed_dir, data)
+    verify_observation_mask(cfg, seed_dir, data)
     priors = {
         "ls": dist.LogNormal(cfg.prior_loc, cfg.prior_scale),
         "beta": dist.Normal(0.0, 1.0),

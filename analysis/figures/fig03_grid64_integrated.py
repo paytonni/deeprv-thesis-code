@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Figure 3: all-seed quantitative evidence at 64x64 (no duplicated maps)."""
+"""Figure 3: all-seed quantitative results at 64x64 (no duplicated maps)."""
 
 from __future__ import annotations
 

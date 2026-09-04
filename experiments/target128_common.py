@@ -857,7 +857,7 @@ def save_checkpoint(
             "path": path.name,
             "saved_at_utc": utc_now(),
             "sha256": checkpoint_hash,
-            "publication_protocol": "local_stage_copy_verify_atomic_rename_v1",
+            "publication_protocol": "local_copy_verify_atomic_rename_v1",
         },
     )
     if keep:
@@ -1188,7 +1188,7 @@ def resource_gate(cfg: Config, required_gib: float, stage: str, root: Path) -> b
         "gpu": observation,
         "status": "PASS" if passed else "NOT_RUN_RESOURCE_LIMIT",
     }
-    write_json(root / "static_audit" / f"resource_gate_{stage}.json", payload)
+    write_json(root / "resource_checks" / f"resource_gate_{stage}.json", payload)
     return passed
 
 def plot_diagnostics(output_dir: Path, scalar: Mapping[str, np.ndarray]) -> None:

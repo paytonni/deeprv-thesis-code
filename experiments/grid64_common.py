@@ -1540,7 +1540,7 @@ def run_one_inference(
         mcmc_warmup=diagnostics["mcmc_warmup"],
         mcmc_samples=diagnostics["mcmc_samples_per_chain"],
     )
-    legacy_ess = {
+    ess_summary = {
         "ls": diagnostics["ess_bulk_ls"],
         "beta": diagnostics["ess_bulk_beta"],
     }
@@ -1552,7 +1552,7 @@ def run_one_inference(
         samples_flat,
         posterior,
         infer_time,
-        legacy_ess,
+        ess_summary,
         {"num_divergences": diagnostics["num_divergences"]},
         training,
         full_reference_flat,

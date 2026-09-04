@@ -18,20 +18,23 @@ import pandas as pd
 
 ROOT = Path(__file__).resolve().parents[2]
 OUT = ROOT / "figures" / "generated"
-SOURCE_DATA = ROOT / "figure_sources" / "data"
-DL4BI = Path(os.environ.get("DEEPRV_RESULTS_ROOT", ROOT))
-ARCHIVE_DIR = (
-    DL4BI / "outputs" / "oliver_64x64_uniform_obs50_seed0_seed1_unit_zips"
+ANALYSIS_DATA = Path(
+    os.environ.get("DEEPRV_ANALYSIS_DATA_ROOT", ROOT / "analysis" / "data")
 )
-DEEPRV_SEED0 = (
-    ARCHIVE_DIR / "deeprv_target64_uniform_obs50_allmodels_ls30_decoderseed0_seed0.zip"
+RESULTS_ROOT = Path(os.environ.get("DEEPRV_RESULTS_ROOT", ROOT))
+GRID64_SEED0 = (
+    RESULTS_ROOT
+    / "outputs"
+    / "grid64"
+    / "grid64_thesis_comparison"
+    / "seed_0"
 )
-FULL_GP_SEED0 = (
-    ARCHIVE_DIR / "directgp_target64_uniform_obs50_fullgp_reference_ls30_seed0.zip"
-)
-DIRECT32_SEED0 = (
-    ARCHIVE_DIR
-    / "directgp_target64_uniform_obs50_inducing32_approxmethods_with_fullref_ls30_seed0.zip"
+DIRECT64_SEED0 = (
+    RESULTS_ROOT
+    / "outputs"
+    / "grid64_direct_gp"
+    / "grid64_direct_gp"
+    / "seed_0"
 )
 
 TEACHERS = ("Bilinear", "Cubic", "DTC", "FITC")
@@ -111,6 +114,32 @@ def read_zip_pickle(zip_path: Path, member: str) -> dict:
     return _JaxArraySafeUnpickler(io.BytesIO(payload)).load()
 
 
+def read_pickle(path: Path) -> dict:
+    if not path.is_file():
+        raise FileNotFoundError(
+            f"Experiment artifact not found: {path}. Set DEEPRV_RESULTS_ROOT to "
+            "the external experiment-output root."
+        )
+    with path.open("rb") as handle:
+        return _JaxArraySafeUnpickler(handle).load()
+
+
+def posterior_mean_local(path: Path, side: int = 64) -> np.ndarray:
+    if not path.is_file():
+        raise FileNotFoundError(
+            f"Posterior artifact not found: {path}. Set DEEPRV_RESULTS_ROOT to "
+            "the external experiment-output root."
+        )
+    with np.load(path) as loaded:
+        draws = np.asarray(loaded["obs"], dtype=float)
+    if draws.ndim < 2:
+        raise ValueError(f"Unexpected posterior array shape {draws.shape}: {path}")
+    mean = draws.mean(axis=0).reshape(side, side)
+    if not np.isfinite(mean).all() or np.any(mean < 0):
+        raise ValueError(f"Invalid posterior predictive mean: {path}")
+    return mean
+
+
 def posterior_mean_zip(zip_path: Path, member: str, side: int = 64) -> np.ndarray:
     with zipfile.ZipFile(zip_path) as archive:
         payload = archive.read(member)
@@ -125,12 +154,9 @@ def posterior_mean_zip(zip_path: Path, member: str, side: int = 64) -> np.ndarra
 
 
 def load_and_verify_seed0_data() -> dict:
-    """Load Seed 0 and prove that all three archives use the same data/mask."""
-    archives = (DEEPRV_SEED0, FULL_GP_SEED0, DIRECT32_SEED0)
-    for path in archives:
-        if not path.is_file():
-            raise FileNotFoundError(path)
-    records = [read_zip_pickle(path, "seed_0/observed_data.pkl") for path in archives]
+    """Load Seed 0 and verify matched DeepRV and Direct GP data/masks."""
+    paths = (GRID64_SEED0 / "observed_data.pkl", DIRECT64_SEED0 / "observed_data.pkl")
+    records = [read_pickle(path) for path in paths]
     exact_keys = ("y_full", "obs_mask", "s")
     for key in exact_keys:
         arrays = [np.asarray(record[key]) for record in records]
@@ -152,8 +178,16 @@ def load_and_verify_seed0_data() -> dict:
 
 
 def read_results() -> tuple[pd.DataFrame, pd.DataFrame]:
-    long_path = SOURCE_DATA / "results_long_author_corrected.csv"
-    aggregate_path = SOURCE_DATA / "results_aggregate_author_corrected.csv"
+    long_path = ANALYSIS_DATA / "results_long.csv"
+    aggregate_path = ANALYSIS_DATA / "results_aggregate.csv"
+    missing = [path for path in (long_path, aggregate_path) if not path.is_file()]
+    if missing:
+        raise FileNotFoundError(
+            "Missing analysis-ready input(s): "
+            + ", ".join(str(path) for path in missing)
+            + ". Run analysis/prepare_analysis_inputs.py first or set "
+            "DEEPRV_ANALYSIS_DATA_ROOT."
+        )
     return pd.read_csv(long_path), pd.read_csv(aggregate_path)
 
 

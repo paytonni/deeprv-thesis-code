@@ -1,4 +1,4 @@
-"""Phase-1 diagnostics shared by the synthetic DeepRV experiments.
+"""Shared model diagnostics for the synthetic DeepRV experiments.
 
 This module is deliberately independent of notebook state.  It records the
 JAX/XLA backend, computes accuracy against the simulated latent/rate truth,
@@ -345,7 +345,7 @@ def compute_truth_relative_metrics(
 
 
 def write_metric_schema(output_dir: Path, metrics: dict[str, Any]) -> None:
-    """Write the two Phase-1 metric views without removing the legacy row."""
+    """Write the truth-relative and Full-GP-fidelity metric views."""
     identity = {
         key: metrics.get(key)
         for key in ("seed", "model_name", "budget", "diagnostics_passed")

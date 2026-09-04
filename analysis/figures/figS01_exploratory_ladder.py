@@ -1,38 +1,47 @@
 #!/usr/bin/env python3
-"""Supplementary Figure S1: 8x8 and 16x16 exploratory evidence."""
+"""Supplementary Figure S1: 8x8 and 16x16 exploratory results."""
 
 from __future__ import annotations
 
 import matplotlib.pyplot as plt
 import numpy as np
-import pandas as pd
 
-from figure_common import SOURCE_DATA, add_panel_label, apply_style, save_figure
+from figure_common import add_panel_label, apply_style, read_results, save_figure
 
 
-def value(data, resolution, variant, construction, side, metric, ell=30):
-    rows = data[
-        (data["target_resolution"] == resolution)
-        & data["experiment_variant"].str.contains(variant)
-        & (data["teacher"] == construction)
-        & (data["inducing_grid_size"].astype(str) == str(side))
-        & (data["metric_name"] == metric)
-        & (data["true_lengthscale"] == ell)
+def value(long, aggregates, resolution, study, construction, side, metric, ell=30):
+    rows = aggregates[
+        (aggregates["grid"] == resolution)
+        & (aggregates["study"] == study)
+        & (aggregates["teacher"] == construction)
+        & (aggregates["metric"] == metric)
+        & (aggregates["true_lengthscale"] == ell)
     ]
+    long_rows = long[
+        (long["grid"] == resolution)
+        & (long["study"] == study)
+        & (long["teacher"] == construction)
+        & (long["true_lengthscale"] == ell)
+    ]
+    if side is not None:
+        rows = rows[rows["inducing_side"] == side]
+        long_rows = long_rows[long_rows["inducing_side"] == side]
     if len(rows) != 1:
         raise RuntimeError(
-            (resolution, variant, construction, side, metric, ell, len(rows))
+            (resolution, study, construction, side, metric, ell, len(rows))
         )
-    return float(rows.iloc[0]["metric_value"]), str(
-        rows.iloc[0]["diagnostic_status"]
-    )
+    if "diagnostic_status" in long_rows:
+        unverified = long_rows["diagnostic_status"].astype(str).str.startswith("UNVERIFIED").any()
+    elif "formal_pass" in long_rows:
+        unverified = (~long_rows["formal_pass"].astype(bool)).any()
+    else:
+        unverified = False
+    return float(rows.iloc[0]["mean"]), "UNVERIFIED" if unverified else "VERIFIED"
 
 
 def main() -> None:
     apply_style(8.0)
-    source = SOURCE_DATA / "8x8_16x16_exploratory_metrics.csv"
-    data = pd.read_csv(source, keep_default_na=False)
-    data["true_lengthscale"] = pd.to_numeric(data["true_lengthscale"])
+    long, aggregates = read_results()
 
     fig, axes = plt.subplots(1, 3, figsize=(7.20, 2.55), constrained_layout=True)
     labels = [
@@ -45,15 +54,15 @@ def main() -> None:
         "16: Local16",
     ]
     specs = [
-        ("8x8", "exact_lowres_local", "Exact", "NOT_APPLICABLE"),
-        ("8x8", "exact_lowres_local", "Lowres", "4"),
-        ("8x8", "exact_lowres_local", "Local", "8"),
-        ("16x16", "exact_lowres_local", "Exact", "NOT_APPLICABLE"),
-        ("16x16", "exact_lowres_local", "Lowres", "8"),
-        ("16x16", "exact_lowres_local", "Local", "8"),
-        ("16x16", "exact_lowres_local", "Local", "16"),
+        ("8x8", "foundations", "Exact", None),
+        ("8x8", "foundations", "Lowres", 4),
+        ("8x8", "foundations", "Local", 8),
+        ("16x16", "support", "Exact", None),
+        ("16x16", "support", "Lowres", 8),
+        ("16x16", "support", "Local", 8),
+        ("16x16", "support", "Local", 16),
     ]
-    mse = [value(data, *spec, "posterior_mean_mse_vs_full_gp")[0] for spec in specs]
+    mse = [value(long, aggregates, *spec, "predictive_mse_vs_full_gp")[0] for spec in specs]
     axes[0].barh(
         np.arange(len(labels))[::-1],
         mse,
@@ -70,11 +79,12 @@ def main() -> None:
         vals, statuses = [], []
         for side in sides:
             val, status = value(
-                data,
+                long,
+                aggregates,
                 "16x16",
-                f"frontier_gt_ls_{ell}",
+                "spacing",
                 "Lowres",
-                str(side),
+                side,
                 "posterior_mean_log1p_rmse_vs_full_gp",
                 ell,
             )
@@ -108,11 +118,12 @@ def main() -> None:
     saving = [
         100
         * value(
-            data,
+            long,
+            aggregates,
             "16x16",
-            "frontier_gt_ls_30",
+            "spacing",
             "Lowres",
-            str(side),
+            side,
             "measured_pretraining_cost_saving_vs_exact",
             30,
         )[0]

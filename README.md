@@ -7,10 +7,11 @@ This repository accompanies the MSc Statistics thesis *Approximate Gaussian Proc
 - `notebooks/01_small_grid_foundations_8x8.ipynb`: 8 x 8 Full GP, Exact, low-resolution and local-support comparison.
 - `notebooks/02_support_and_spacing_16x16.ipynb`: 16 x 16 support and inducing-spacing comparisons.
 - `notebooks/03_systematic_comparison_32x32.ipynb`: Full GP, Exact and full-domain Bilinear/Cubic/DTC/FITC DeepRV comparisons at inducing sides 4, 8 and 16.
-- `notebooks/04_scaled_comparison_64x64.ipynb`: the corresponding DeepRV comparison at sides 8, 16 and 32, plus the matched Direct GP stage.
+- `notebooks/04_scaled_comparison_64x64.ipynb`: the corresponding DeepRV comparison at sides 8, 16 and 32, plus the matched Direct GP comparison.
 - `notebooks/05_target128_scaling_frontier.ipynb`: thesis-fixed Target-128 checkpoints and the Full GP128 feasibility probe.
 - `experiments/`: simulation, DeepRV pretraining, frozen-decoder inference, matched Direct GP inference, diagnostics, metrics and runtime accounting.
-- `analysis/figures/` and `analysis/tables/`: scripts used to generate the thesis figures and tables from experiment outputs.
+- `analysis/prepare_analysis_inputs.py`: normalizes completed metric outputs and builds deterministic three-seed summaries.
+- `analysis/figures/` and `analysis/tables/`: scripts used to generate the thesis figures and tables from analysis-ready inputs.
 
 The public datasets are generated with Seed 0, Seed 1 and Seed 2. The 32 x 32 and 64 x 64 experiments use two NUTS chains, 1,000 warmup iterations per chain and 4,000 retained draws per chain. Target-128 uses one chain, 4,000 warmup iterations and 6,000 retained draws. Formal Target-128 inference uses Exact128 at step 250,000 and Bilinear64, Cubic64 and DTC64 at step 300,000; FITC64 has no eligible formal checkpoint. The Full GP128 entry point is a feasibility and runtime probe only.
 
@@ -26,8 +27,28 @@ DeepRV is supplied by the pinned upstream `dl4bi` dependency; the upstream repos
 
 ## Running experiments
 
-Run one of the five notebooks from the repository root. Each notebook calls the corresponding scripts in `experiments/` and exposes controls for its experiment stages.
+Run one of the five notebooks from the repository root. Each notebook calls the corresponding scripts in `experiments/` and exposes controls for its experiment components.
 
-The matched Direct GP stage in Notebook 04 is resource-intensive and therefore disabled by default. Enable `RUN_DIRECT_GP_COMPARISON` to reproduce the complete 64 x 64 matched Direct GP comparison. Notebook 03 intentionally contains no Direct GP stage.
+The matched Direct GP comparison in Notebook 04 is resource-intensive and therefore disabled by default. Enable `RUN_DIRECT_GP_COMPARISON` to reproduce the complete 64 x 64 matched Direct GP comparison. Notebook 03 intentionally contains no Direct GP comparison.
 
-Experiment outputs are generated at runtime. Checkpoints, posterior samples and generated result files are intentionally not included. The larger experiments require substantial GPU memory and runtime; no training or NUTS run is needed to inspect the source.
+## Preparing figures and tables
+
+After the required experiment runs have completed, convert their leaf metric files into the common analysis schema:
+
+```bash
+python analysis/prepare_analysis_inputs.py \
+  --results-root /path/to/experiment-results \
+  --output-dir /path/to/analysis-data
+```
+
+This writes `results_long.csv` plus three-seed `results_aggregate.csv` summaries using the mean, sample standard deviation (`ddof=1`) and `n`. Point the figure scripts at that directory with `DEEPRV_ANALYSIS_DATA_ROOT`, or pass `--analysis-data` to `analysis/tables/build_result_tables.py`. The configuration table is generated directly from the public experiment `Config` defaults and `experiments/configs/target128.json`:
+
+```bash
+DEEPRV_ANALYSIS_DATA_ROOT=/path/to/analysis-data python analysis/figures/fig03_grid64_integrated.py
+python analysis/tables/build_result_tables.py --analysis-data /path/to/analysis-data
+python analysis/tables/build_configuration_table.py
+```
+
+Posterior-map figures additionally require the generated posterior artifacts. Set `DEEPRV_RESULTS_ROOT` to a directory containing the repository's normal output layout, including `outputs/grid32/grid32_thesis_comparison/` and both `outputs/grid64/grid64_thesis_comparison/` and `outputs/grid64_direct_gp/grid64_direct_gp/` for the matched Seed 0 maps.
+
+Experiment outputs are generated at runtime. No scientific result files, checkpoints, posterior samples or generated figures are committed. The larger experiments require substantial GPU memory and runtime; no training or NUTS run is needed to inspect the source.

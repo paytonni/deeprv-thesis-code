@@ -25,7 +25,7 @@ EXPECTED_OUTPUTS = (
 RASTER_DPI = 600
 
 from plot_common import (
-    DL4BI,
+    RESULTS_ROOT,
     add_panel_label,
     apply_style,
     draw_difference_and_mask_row,
@@ -64,7 +64,15 @@ def main() -> None:
     handles, labels = metric_axes[0].get_legend_handles_labels()
     fig.legend(handles, labels, loc="upper center", ncol=4, bbox_to_anchor=(0.49, 0.985))
 
-    base = DL4BI / "outputs" / "target32_uniformmask_inducing4-8-16_ls30" / "seed_0" / "inference" / "initial"
+    base = (
+        RESULTS_ROOT
+        / "outputs"
+        / "grid32"
+        / "grid32_thesis_comparison"
+        / "seed_0"
+        / "inference"
+        / "initial"
+    )
     paths = [
         base / "full_gp" / "posterior_predictive.npz",
         base / "deeprv_exact" / "posterior_predictive.npz",
@@ -81,9 +89,10 @@ def main() -> None:
     )
     difference_axes = [fig.add_subplot(bottom[1, i]) for i in range(4)]
     observed = read_pickle(
-        DL4BI
+        RESULTS_ROOT
         / "outputs"
-        / "target32_uniformmask_inducing4-8-16_ls30"
+        / "grid32"
+        / "grid32_thesis_comparison"
         / "seed_0"
         / "observed_data.pkl"
     )

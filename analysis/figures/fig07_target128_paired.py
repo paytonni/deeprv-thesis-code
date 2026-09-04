@@ -1,12 +1,12 @@
 #!/usr/bin/env python3
-"""Paired Target-128 comparison using the author-corrected Seed 0/1/2 labels."""
+"""Paired Target-128 comparison for Seeds 0, 1 and 2."""
 
 from __future__ import annotations
 
 import matplotlib.pyplot as plt
 import pandas as pd
 
-from figure_common import COLORS, SOURCE_DATA, add_panel_label, apply_style, save_figure
+from figure_common import COLORS, add_panel_label, apply_style, read_results, save_figure
 
 
 def draw_panel(ax, data: pd.DataFrame, metric: str, ylabel: str) -> None:
@@ -31,7 +31,11 @@ def draw_panel(ax, data: pd.DataFrame, metric: str, ylabel: str) -> None:
 
 def main() -> None:
     apply_style(8.0)
-    data = pd.read_csv(SOURCE_DATA / "target128_exact_cubic_author_corrected.csv")
+    data, _ = read_results()
+    data = data[
+        (data["grid"] == "128x128")
+        & data["model"].isin(("Exact128", "Cubic64"))
+    ].copy()
     expected = {(model, seed) for model in ("Exact128", "Cubic64") for seed in (0, 1, 2)}
     observed = set(zip(data["model"], data["seed"]))
     if observed != expected or data[["predictive_count_mse", "ell_abs_error"]].isna().any().any():

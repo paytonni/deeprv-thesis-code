@@ -707,7 +707,7 @@ def prepare(cfg: Config, base_cfg: base.Config):
     data_time = perf_counter() - stage_start
     mask = np.asarray(data["obs_mask"], dtype=bool)
     base.write_json(
-        seed_dir / "mask_audit.json",
+        seed_dir / "mask_validation.json",
         {
             "created_at_utc": base.utc_now(),
             "seed": cfg.seed,

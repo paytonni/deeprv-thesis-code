@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Figure 6: prespecified Seed-0 64x64 posterior predictive map audit."""
+"""Figure 6: prespecified Seed-0 64x64 posterior predictive maps."""
 
 from __future__ import annotations
 
@@ -8,13 +8,12 @@ from matplotlib.colors import ListedColormap
 import numpy as np
 
 from figure_common import (
-    DEEPRV_SEED0,
-    DIRECT32_SEED0,
-    FULL_GP_SEED0,
+    DIRECT64_SEED0,
+    GRID64_SEED0,
     add_panel_label,
     apply_style,
     load_and_verify_seed0_data,
-    posterior_mean_zip,
+    posterior_mean_local,
     save_figure,
 )
 
@@ -31,15 +30,15 @@ OUTPUT_FORMATS = (".svg", ".pdf", ".png")
 RASTER_DPI = 600
 
 
-DEEPRV_MEMBERS = {
-    "Exact DeepRV": "seed_0/inference/initial/deeprv_exact/posterior_predictive.npz",
-    "DeepRV Bilinear32": "seed_0/inference/initial/deeprv_lowres_bilinear_32x32/posterior_predictive.npz",
-    "DeepRV Cubic32": "seed_0/inference/initial/deeprv_lowres_cubic_32x32/posterior_predictive.npz",
-    "DeepRV DTC32": "seed_0/inference/initial/deeprv_lowres_dtc_32x32/posterior_predictive.npz",
-    "DeepRV FITC32": "seed_0/inference/initial/deeprv_lowres_fitc_32x32/posterior_predictive.npz",
+DEEPRV_PATHS = {
+    "Exact DeepRV": GRID64_SEED0 / "inference" / "initial" / "deeprv_exact" / "posterior_predictive.npz",
+    "DeepRV Bilinear32": GRID64_SEED0 / "inference" / "initial" / "deeprv_lowres_bilinear_32x32" / "posterior_predictive.npz",
+    "DeepRV Cubic32": GRID64_SEED0 / "inference" / "initial" / "deeprv_lowres_cubic_32x32" / "posterior_predictive.npz",
+    "DeepRV DTC32": GRID64_SEED0 / "inference" / "initial" / "deeprv_lowres_dtc_32x32" / "posterior_predictive.npz",
+    "DeepRV FITC32": GRID64_SEED0 / "inference" / "initial" / "deeprv_lowres_fitc_32x32" / "posterior_predictive.npz",
 }
-FULL_MEMBER = "seed_0/inference/initial/full_gp/posterior_predictive.npz"
-DIRECT_CUBIC_MEMBER = "seed_0/inference/initial/kissgp_ski_cubic/posterior_predictive.npz"
+FULL_PATH = GRID64_SEED0 / "inference" / "initial" / "full_gp" / "posterior_predictive.npz"
+DIRECT_CUBIC_PATH = DIRECT64_SEED0 / "initial" / "kissgp_ski_cubic" / "posterior_predictive.npz"
 
 
 def clean_map_axis(axis, title: str, label: str) -> None:
@@ -56,12 +55,12 @@ def main() -> None:
     apply_style(6.5)
     data = load_and_verify_seed0_data()
     latent, mask = data["latent"], data["mask"]
-    full = posterior_mean_zip(FULL_GP_SEED0, FULL_MEMBER)
+    full = posterior_mean_local(FULL_PATH)
     deep = {
-        title: posterior_mean_zip(DEEPRV_SEED0, member)
-        for title, member in DEEPRV_MEMBERS.items()
+        title: posterior_mean_local(path)
+        for title, path in DEEPRV_PATHS.items()
     }
-    direct_cubic = posterior_mean_zip(DIRECT32_SEED0, DIRECT_CUBIC_MEMBER)
+    direct_cubic = posterior_mean_local(DIRECT_CUBIC_PATH)
 
     prediction_titles = (
         "Full GP reference",

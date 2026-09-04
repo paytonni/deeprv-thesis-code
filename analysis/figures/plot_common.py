@@ -22,13 +22,10 @@ plt.rcParams["svg.fonttype"] = "none"
 
 ROOT = Path(__file__).resolve().parents[2]
 OUT = ROOT / "figures" / "generated"
-CORRECTED_LONG = (
-    ROOT / "evidence_overrides" / "generated" / "results_long_author_corrected.csv"
+ANALYSIS_DATA = Path(
+    os.environ.get("DEEPRV_ANALYSIS_DATA_ROOT", ROOT / "analysis" / "data")
 )
-CORRECTED_AGGREGATE = (
-    ROOT / "evidence_overrides" / "generated" / "results_aggregate_author_corrected.csv"
-)
-DL4BI = Path(os.environ.get("DEEPRV_RESULTS_ROOT", ROOT))
+RESULTS_ROOT = Path(os.environ.get("DEEPRV_RESULTS_ROOT", ROOT))
 
 TEACHERS = ["Bilinear", "Cubic", "DTC", "FITC"]
 COLORS = {
@@ -84,7 +81,17 @@ def save_figure(fig, stem: str, dpi: int = 600) -> None:
 
 
 def read_results() -> tuple[pd.DataFrame, pd.DataFrame]:
-    return pd.read_csv(CORRECTED_LONG), pd.read_csv(CORRECTED_AGGREGATE)
+    long_path = ANALYSIS_DATA / "results_long.csv"
+    aggregate_path = ANALYSIS_DATA / "results_aggregate.csv"
+    missing = [path for path in (long_path, aggregate_path) if not path.is_file()]
+    if missing:
+        raise FileNotFoundError(
+            "Missing analysis-ready input(s): "
+            + ", ".join(str(path) for path in missing)
+            + ". Run analysis/prepare_analysis_inputs.py first or set "
+            "DEEPRV_ANALYSIS_DATA_ROOT."
+        )
+    return pd.read_csv(long_path), pd.read_csv(aggregate_path)
 
 
 def aggregate_value(
@@ -116,6 +123,11 @@ class _JaxArraySafeUnpickler(pickle.Unpickler):
 
 
 def read_pickle(path: Path) -> dict:
+    if not path.is_file():
+        raise FileNotFoundError(
+            f"Experiment artifact not found: {path}. Set DEEPRV_RESULTS_ROOT to "
+            "the external experiment-output root."
+        )
     with path.open("rb") as handle:
         return _JaxArraySafeUnpickler(handle).load()
 
@@ -126,6 +138,11 @@ def read_zip_pickle(zip_path: Path, member: str) -> dict:
 
 
 def posterior_mean_local(path: Path, side: int) -> np.ndarray:
+    if not path.is_file():
+        raise FileNotFoundError(
+            f"Posterior artifact not found: {path}. Set DEEPRV_RESULTS_ROOT to "
+            "the external experiment-output root."
+        )
     with np.load(path) as loaded:
         return np.asarray(loaded["obs"], dtype=float).mean(axis=0).reshape(side, side)
 
@@ -139,6 +156,11 @@ def posterior_mean_zip(zip_path: Path, member: str, side: int) -> np.ndarray:
 
 def posterior_sd_local(path: Path, side: int) -> np.ndarray:
     """Sample SD of retained posterior-predictive count draws by location."""
+    if not path.is_file():
+        raise FileNotFoundError(
+            f"Posterior artifact not found: {path}. Set DEEPRV_RESULTS_ROOT to "
+            "the external experiment-output root."
+        )
     with np.load(path) as loaded:
         return np.asarray(loaded["obs"], dtype=float).std(ddof=1, axis=0).reshape(
             side, side

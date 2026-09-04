@@ -7,6 +7,9 @@ checkpoints/
 checkpoint/
 wandb/
 logs/
+analysis/data/
+tables/generated/
+figures/generated/
 
 # Generated scientific artifacts
 *.ckpt

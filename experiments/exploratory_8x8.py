@@ -1,9 +1,8 @@
 #!/usr/bin/env python3
-"""Paper-like 8x8 DeepRV pretraining audit.
+"""8x8 exploratory DeepRV pretraining comparison.
 
 This experiment checks full GP MCMC, exact full-resolution DeepRV, low-resolution
-full-domain pretraining, and local-region pretraining under settings closer to
-the DeepRV synthetic benchmark than the earlier smoke tests.
+full-domain pretraining, and local-region pretraining under the thesis settings.
 """
 
 from __future__ import annotations
@@ -66,7 +65,7 @@ class Config:
     prior_loc: float = 3.0
     prior_scale: float = 0.4
     coverage_level: float = 0.9
-    output_root: str = "outputs/deeprv_paperlike_8x8_pretraining_audit"
+    output_root: str = "outputs/exploratory_8x8"
     run_name: str = ""
     pretrain_modes: tuple[str, ...] = ("exact", "lowres", "local")
     pretrain_grid_size: int = 4
@@ -75,7 +74,7 @@ class Config:
 
 
 def parse_args() -> Config:
-    parser = argparse.ArgumentParser(description="Paper-like 8x8 pretraining audit.")
+    parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--seed", type=int, choices=(0, 1, 2), default=Config.seed)
     parser.add_argument("--grid-size", type=int, default=Config.grid_size)
     parser.add_argument("--domain-stop", type=float, default=Config.domain_stop)
@@ -128,7 +127,7 @@ def make_output_dir(cfg: Config) -> Path:
     timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
     modes = "-".join(cfg.pretrain_modes)
     run_name = cfg.run_name or (
-        f"paperlike8x8_matern12_ls{int(cfg.gt_ls)}_{modes}_seed{cfg.seed}_{timestamp}"
+        f"exploratory8x8_matern12_ls{int(cfg.gt_ls)}_{modes}_seed{cfg.seed}_{timestamp}"
     )
     out_dir = Path(cfg.output_root) / run_name
     out_dir.mkdir(parents=True, exist_ok=False)
@@ -652,7 +651,7 @@ def main():
     plot_difference_to_full_gp(out_dir, cfg, posteriors)
     plot_lengthscale_posteriors(out_dir, samples_by_model, cfg.gt_ls)
 
-    print("\nPaper-like 8x8 pretraining audit complete.")
+    print("\n8x8 exploratory pretraining comparison complete.")
     print("Output directory:", out_dir)
     print("Metrics:", out_dir / "metrics.csv")
     print("Truth/mask plot:", out_dir / "diagnostic_truth_and_mask.png")
